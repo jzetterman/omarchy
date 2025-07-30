@@ -22,13 +22,9 @@ sudo chmod 644 /etc/gnupg/dirmngr.conf
 sudo gpgconf --kill dirmngr || true
 sudo gpgconf --launch dirmngr || true
 
-# Setup default login.keyring with no password.
-# This change allows, for example, 1Password to store MFA tokens automatically
-DEFAULT_KEYRING_PATH=$(dbus-send --session --dest=org.freedesktop.secrets --type=method_call --print-reply /org/freedesktop/secrets org.freedesktop.Secret.Service.ReadAlias string:'default' | awk '/object path/ {print $3}' | tr -d '"')
-if [ "$DEFAULT_KEYRING_PATH" != "/" ]; then
-    # Don't do anything if a default keyring already exists
-    echo "Default keyring is already provisioned, skipping..." | tee -a ~/omarchy-install.log
-else
+# If no existing keyrings, set up login.keyring with no password as the default keyring.
+# This change allows, for example, 1Password to store MFA tokens automatically.
+if [ -z "$(find ~/.local/share/keyrings/ -maxdepth 1 -type f)" ]; then
     echo "Creating default keyring..." | tee -a ~/omarchy-install.log
     pkill gnome-keyring-d || true
     eval "$(gnome-keyring-daemon --start --components=pkcs11,secrets,ssh)"
