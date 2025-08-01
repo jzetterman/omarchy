@@ -18,3 +18,12 @@ fi
 
 # Copy over Omarchy applications
 source ~/.local/share/omarchy/bin/omarchy-refresh-applications || true
+
+# If no existing keyrings, set up login.keyring with no password as the default keyring.
+# This allows, for example, 1Password to store MFA tokens automatically.
+if [ -z "$(find ~/.local/share/keyrings/ -maxdepth 1 -type f)" ]; then
+    echo "Creating default keyring..." | tee -a ~/omarchy-install.log
+    pkill gnome-keyring-d || true
+    eval "$(gnome-keyring-daemon --start --components=pkcs11,secrets,ssh)"
+    echo '' | gnome-keyring-daemon --unlock
+fi

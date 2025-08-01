@@ -22,15 +22,6 @@ sudo chmod 644 /etc/gnupg/dirmngr.conf
 sudo gpgconf --kill dirmngr || true
 sudo gpgconf --launch dirmngr || true
 
-# If no existing keyrings, set up login.keyring with no password as the default keyring.
-# This change allows, for example, 1Password to store MFA tokens automatically.
-if [ -z "$(find ~/.local/share/keyrings/ -maxdepth 1 -type f)" ]; then
-    echo "Creating default keyring..." | tee -a ~/omarchy-install.log
-    pkill gnome-keyring-d || true
-    eval "$(gnome-keyring-daemon --start --components=pkcs11,secrets,ssh)"
-    echo '' | gnome-keyring-daemon --unlock
-fi
-
 # Increase lockout limit to 10 and decrease timeout to 2 minutes
 sudo sed -i 's|^\(auth\s\+required\s\+pam_faillock.so\)\s\+preauth.*$|\1 preauth silent deny=10 unlock_time=120|' "/etc/pam.d/system-auth"
 sudo sed -i 's|^\(auth\s\+\[default=die\]\s\+pam_faillock.so\)\s\+authfail.*$|\1 authfail deny=10 unlock_time=120|' "/etc/pam.d/system-auth"
