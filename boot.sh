@@ -18,7 +18,7 @@ sudo pacman -Sy --noconfirm --needed git
 
 # Use custom repo if specified, otherwise default to basecamp/omarchy
 # OMARCHY_REPO="${OMARCHY_REPO:-basecamp/omarchy}"
-OMARCHY_REPO="${JZ_OMARCHY_REPO:-jzetterman/omarchy}"
+JZ_OMARCHY_REPO="${JZ_OMARCHY_REPO:-jzetterman/omarchy}"
 
 echo -e "\nCloning Omarchy from: https://github.com/${JZ_OMARCHY_REPO}.git"
 rm -rf ~/.local/share/omarchy/
