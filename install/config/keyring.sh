@@ -27,7 +27,7 @@ EOF
     )
     fi
 
-    # STEP 2: Get the GPG key ID by filtering email
+    # STEP 2: Get the GPG key ID from the output
     GPG_ID=$(echo "$GPG_OUTPUT" | grep 'openpgp-revocs.d' | grep -o '[A-F0-9]\{16\}\.rev' | cut -d'.' -f1)
     if [ -z "$GPG_ID" ]; then
       echo "Error: Failed to find GPG key ID in output: $GPG_OUTPUT"
