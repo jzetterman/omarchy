@@ -84,6 +84,29 @@ if [ $gnome_keyring_in_use -eq 1 ] || [ $kwallet_in_use -eq 1 ] || [ $keepassxc_
         else
             echo "pass is already installed."
         fi
+
+        if [ -z "$(git config user.name)" ] || [ -z "$(git config user.email)" ]; then
+            GPG_OUTPUT=$(cat <<EOF | gpg --batch --generate-key 2>&1
+%no-protection
+Key-Type: RSA
+Key-Length: 4096
+Name-Real: Omarchy
+Name-Email: omarchy@keyring.local
+Expire-Date: 0
+EOF
+        )
+        else
+            GPG_OUTPUT=$(cat <<EOF | gpg --batch --generate-key 2>&1
+%no-protection
+Key-Type: RSA
+Key-Length: 4096
+Name-Real: $(git config user.name)
+Name-Email: $(git config user.email)
+Expire-Date: 0
+EOF
+        )
+        fi
+
         # Initialize pass (assuming GPG key is already set up)
         if [ ! -d "$HOME/.password-store" ]; then
             echo "Initializing pass..."
