@@ -107,10 +107,10 @@ EOF
         )
         fi
 
-        # Initialize pass (assuming GPG key is already set up)
+        # Initialize pass
         if [ ! -d "$HOME/.password-store" ]; then
             echo "Initializing pass..."
-            pass init <your-gpg-id>  # Replace with your GPG key ID or email
+            pass init $GPG_OUTPUT
         else
             echo "pass is already initialized."
         fi
@@ -128,10 +128,10 @@ else
     else
         echo "pass is already installed."
     fi
-    # Initialize pass (assuming GPG key is already set up)
+    # Initialize pass
     if [ ! -d "$HOME/.password-store" ]; then
         echo "Initializing pass..."
-        pass init <your-gpg-id>  # Replace with your GPG key ID or email
+        pass init $GPG_OUTPUT
     else
         echo "pass is already initialized."
     fi
