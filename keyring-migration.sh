@@ -63,7 +63,30 @@ else
     echo "KeePassXC not detected as a secrets backend."
 fi
 
-# Step 4: Summary and decision for pass
+# Step 4: Create the GPG meta data
+if [ -z "$(git config user.name)" ] || [ -z "$(git config user.email)" ]; then
+    GPG_OUTPUT=$(cat <<EOF | gpg --batch --generate-key 2>&1
+%no-protection
+Key-Type: RSA
+Key-Length: 4096
+Name-Real: Omarchy
+Name-Email: omarchy@keyring.local
+Expire-Date: 0
+EOF
+)
+else
+    GPG_OUTPUT=$(cat <<EOF | gpg --batch --generate-key 2>&1
+%no-protection
+Key-Type: RSA
+Key-Length: 4096
+Name-Real: $(git config user.name)
+Name-Email: $(git config user.email)
+Expire-Date: 0
+EOF
+)
+fi
+
+# Step 5: Summary and decision for pass
 echo -e "\nSummary:"
 if [ $gnome_keyring_in_use -eq 1 ] || [ $kwallet_in_use -eq 1 ] || [ $keepassxc_secrets_in_use -eq 1 ]; then
     echo "Existing secrets backend(s) detected."
@@ -80,31 +103,9 @@ if [ $gnome_keyring_in_use -eq 1 ] || [ $kwallet_in_use -eq 1 ] || [ $keepassxc_
         # Install pass if not already installed
         if ! check_package "pass"; then
             echo "Installing pass..."
-            sudo yay -S pass
+            yay -S --noconfirm --needed pass pass-secret-service-bin
         else
             echo "pass is already installed."
-        fi
-
-        if [ -z "$(git config user.name)" ] || [ -z "$(git config user.email)" ]; then
-            GPG_OUTPUT=$(cat <<EOF | gpg --batch --generate-key 2>&1
-%no-protection
-Key-Type: RSA
-Key-Length: 4096
-Name-Real: Omarchy
-Name-Email: omarchy@keyring.local
-Expire-Date: 0
-EOF
-        )
-        else
-            GPG_OUTPUT=$(cat <<EOF | gpg --batch --generate-key 2>&1
-%no-protection
-Key-Type: RSA
-Key-Length: 4096
-Name-Real: $(git config user.name)
-Name-Email: $(git config user.email)
-Expire-Date: 0
-EOF
-        )
         fi
 
         # Initialize pass
