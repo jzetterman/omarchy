@@ -101,12 +101,8 @@ if [ $gnome_keyring_in_use -eq 1 ] || [ $kwallet_in_use -eq 1 ] || [ $keepassxc_
     if [ "$choice" = "Yes" ]; then
         echo "Proceeding with pass installation and setup..."
         # Install pass if not already installed
-        if ! check_package "pass"; then
-            echo "Installing pass..."
-            yay -S --noconfirm --needed pass pass-secret-service-bin
-        else
-            echo "pass is already installed."
-        fi
+        echo "Installing pass..."
+        yay -S --noconfirm --needed pass pass-secret-service-bin
 
         # Initialize pass
         if [ ! -d "$HOME/.password-store" ]; then
@@ -123,12 +119,8 @@ if [ $gnome_keyring_in_use -eq 1 ] || [ $kwallet_in_use -eq 1 ] || [ $keepassxc_
 else
     echo "No existing secrets backends detected. Safe to install and activate pass."
     # Install pass if not already installed
-    if ! check_package "pass"; then
-        echo "Installing pass..."
-        yay -S --noconfirm --needed pass pass-secret-service-bin
-    else
-        echo "pass is already installed."
-    fi
+    echo "Installing pass..."
+    yay -S --noconfirm --needed pass pass-secret-service-bin
     # Initialize pass
     if [ ! -d "$HOME/.password-store" ]; then
         echo "Initializing pass..."
