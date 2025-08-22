@@ -3,6 +3,7 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
+export PATH="$HOME/.local/share/omarchy/bin:$PATH"
 OMARCHY_INSTALL=~/.local/share/omarchy/install
 
 # Give people a chance to retry running the installation
@@ -16,16 +17,18 @@ trap catch_errors ERR
 
 show_logo() {
   clear
-  tte -i ~/.local/share/omarchy/logo.txt --frame-rate ${2:-120} ${1:-expand}
+  # tte -i ~/.local/share/omarchy/logo.txt --frame-rate ${2:-120} ${1:-expand}
+  cat <~/.local/share/omarchy/logo.txt
   echo
 }
 
 show_subtext() {
-  echo "$1" | tte --frame-rate ${3:-640} ${2:-wipe}
+  echo "$1" # | tte --frame-rate ${3:-640} ${2:-wipe}
   echo
 }
 
 # Install prerequisites
+source $OMARCHY_INSTALL/preflight/guard.sh
 source $OMARCHY_INSTALL/preflight/aur.sh
 source $OMARCHY_INSTALL/preflight/presentation.sh
 source $OMARCHY_INSTALL/preflight/migrations.sh
@@ -76,7 +79,7 @@ source $OMARCHY_INSTALL/apps/mimetypes.sh
 show_logo highlight
 show_subtext "Updating system packages [5/5]"
 sudo updatedb
-sudo pacman -Syu --noconfirm
+yay -Syu --noconfirm --ignore uwsm
 
 # Reboot
 show_logo laseretch 920
