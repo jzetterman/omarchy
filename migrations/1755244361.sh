@@ -59,7 +59,7 @@ if [ $gnome_keyring_in_use -eq 1 ]; then
 
   # Get user confirmation to proceed
   choice=$(gum choose --header "Omarchy is migrating the OS keystore to pass. You will need to manually \
-    migrate secrets from existing keyrings. Do you want to replace gnome-keyring with pass?" "No" "Yes")
+migrate secrets from existing keyrings. Do you want to replace gnome-keyring with pass?" "No" "Yes")
   if [ "$choice" = "Yes" ]; then
     # Remove gnome-keyring
     echo "Removing GNOME Keyring..."
