@@ -16,45 +16,6 @@ check_directory() {
   return $?
 }
 
-install_pass() {
-  # This is function is only required due to AUR instability. It appears
-  # they have implemented rate limiting as a DDoS migtation measure and I
-  # have run into this several times while testing which required me to
-  # add retry logic to ensure keystore initialization is successful.
-
-  # Install pass if not already installed
-  echo "Installing pass..."
-  max_retries=5
-  retry_count=0
-  success=false
-  while [ $retry_count -lt $max_retries ] && [ "$success" != "true" ]; do
-    ((retry_count++))
-    echo "Attempt $retry_count of $max_retries..."
-
-    output=$(yay -S --noconfirm --needed pass pass-secret-service-bin 2>&1 | tee /dev/tty)
-    exit_status=$?
-
-    # Handle installation failures due to AUR rate limiting
-    if [ $exit_status -eq 0 ]; then
-      echo "Package installed successfully."
-      success=true
-    elif echo "$output" | grep -q "\* status 429: Rate limit reached"; then
-      echo "Error occurred while running yay."
-      sleep 5
-    else
-      # Handle other errors
-      echo "Other error occurred. Full output:"
-      echo "$output"
-      break # Exit loop on non-rate-limit errors
-    fi
-  done
-
-  if [ "$success" != "true" ]; then
-    echo "Failed to install package after $max_retries attempts."
-    exit 1
-  fi
-}
-
 # ----------------------
 # Initialize flags
 # ----------------------
@@ -107,7 +68,7 @@ if [ $gnome_keyring_in_use -eq 1 ]; then
     mv ~/.local/share/keyrings ~/.local/share/gnome-keyrings-archiv
 
     # Install pass
-    install_pass
+    yay -S --noconfirm --needed pass pass-secret-service-bin
 
     # Initialize pass
     if [ ! -d "$HOME/.password-store" ]; then
@@ -124,7 +85,7 @@ if [ $gnome_keyring_in_use -eq 1 ]; then
 else
   echo "No existing secrets backends detected. Safe to install and activate pass."
   # Install pass if not already installed
-  install_pass
+  yay -S --noconfirm --needed pass pass-secret-service-bin
 
   # Initialize pass
   if [ ! -d "$HOME/.password-store" ]; then
