@@ -200,6 +200,30 @@ for url in "${non_meetings[@]}"; do
     "web app opens Teams home for non-meeting $url"
 done
 
+# Meeting-shaped msteams: URLs whose meetup-join tail is malformed must not
+# match. The regex rejects whitespace in the tail, and a leading dash where
+# the id should start (meetup-join/-19:...), so neither becomes a meeting
+# web_url. Same home fallback as the non-meeting cases above.
+begin_case web
+run_handler 'msteams://teams.microsoft.com/l/meetup-join/19:meeting abc@thread.v2'
+assert_webapp "$home_url" \
+  "web app opens Teams home when meetup-join tail contains a space"
+
+begin_case web
+run_handler $'msteams://teams.microsoft.com/l/meetup-join/19:meeting\tabc@thread.v2'
+assert_webapp "$home_url" \
+  "web app opens Teams home when meetup-join tail contains a tab"
+
+begin_case web
+run_handler $'msteams://teams.microsoft.com/l/meetup-join/19:meeting\nabc@thread.v2'
+assert_webapp "$home_url" \
+  "web app opens Teams home when meetup-join tail contains a newline"
+
+begin_case web
+run_handler 'msteams://teams.microsoft.com/l/meetup-join/-19:meeting_abc@thread.v2'
+assert_webapp "$home_url" \
+  "web app opens Teams home when meetup-join tail has a leading dash"
+
 begin_case native
 run_handler
 assert_native "-- teams-for-linux --gtk-version=3" \
