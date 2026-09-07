@@ -243,6 +243,22 @@ run_handler "$meeting_plain"
 assert_webapp "$web_plain" "same id after the throttle window opens again"
 
 begin_case web
+mkdir -p "$STATE_HOME/omarchy"
+now=$(printf '%(%s)T' -1)
+future=$((now + 100))
+printf '%s %s\n' "$stamp_id" "$future" >"$STATE_HOME/omarchy/teams-join-last"
+run_handler "$meeting_plain"
+assert_webapp "$web_plain" "a future throttle stamp (clock stepped back) opens"
+read -r got_id got_t <"$STATE_HOME/omarchy/teams-join-last"
+[[ $got_id == "$stamp_id" ]] ||
+  fail "clock-stepped-back keeps the meeting id on the stamp" "$got_id"
+(( got_t != future )) ||
+  fail "clock-stepped-back overwrites the future stamp" "stamp=$got_t future=$future"
+(( got_t >= now && got_t <= now + 2 )) ||
+  fail "clock-stepped-back stamp is the current time" "stamp=$got_t now=$now"
+pass "a future throttle stamp is overwritten"
+
+begin_case web
 run_handler "$meeting_plain"
 run_handler "$meeting_other"
 assert_file_content "$WEBAPP_LOG" "different id launches twice" "$web_plain"$'\n'"$web_other"

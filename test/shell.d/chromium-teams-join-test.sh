@@ -235,4 +235,30 @@ assertStandDownAndLatch(encodedMarkerHref, 'omarchyWebapp%3D1')
   assertEqual(second.state.href, href, 'repeat in the same tab does not fire')
   assertEqual(second.state.stopCalls, 0, 'repeat in the same tab does not call window.stop')
 }
+
+{
+  const meetingA = `https://teams.microsoft.com${meetingColon}`
+  const meetingBPath = '/l/meetup-join/19:meeting_xyz@thread.v2'
+  const meetingB = `https://teams.microsoft.com${meetingBPath}`
+  const expectedB = `msteams://teams.microsoft.com${meetingBPath}`
+  const store = new Map()
+
+  const first = runScript(meetingA, { store })
+  assertEqual(first.state.href, expectedColon, 'meeting A in a shared store fires')
+  assertEqual(first.state.stopCalls, 1, 'meeting A in a shared store calls window.stop')
+
+  const second = runScript(meetingB, { store })
+  assertEqual(second.state.href, expectedB, 'a different meeting in the same tab still fires')
+  assertEqual(second.state.stopCalls, 1, 'a different meeting in the same tab calls window.stop')
+
+  const keys = [...store.keys()].sort()
+  assertDeepEqual(
+    keys,
+    [
+      'teamsjoin:/l/meetup-join/19:meeting_abc@thread.v2',
+      'teamsjoin:/l/meetup-join/19:meeting_xyz@thread.v2',
+    ].sort(),
+    'the store holds two distinct teamsjoin: keys'
+  )
+}
 JS
