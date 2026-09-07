@@ -51,8 +51,9 @@ plain Teams web app. This work does not depend on it and does not change it.
    existing users. This feature adds no finalize step of its own and no
    `install/user/chromium.sh` (that is for native-messaging extensions like `copy-url`). A
    browser installed after this ships needs nothing more: `omarchy-install-browser` copies the
-   flags file and writes the Zen policy on every install, and the handler checks for
-   `teams-for-linux` at run time. The one-shot migration is never the sole path, since
+   flags file, the Zen policy is already on disk as a package-owned file (Decision 8b), and
+   the handler checks for `teams-for-linux` at run time. The one-shot migration is never the
+   sole path, since
    `--first-install` stamps it done.
 5. A non-meeting `msteams:` URL (chat, team, `/meet/<id>` deep links, which Teams web and
    Outlook emit) reaches `teams-for-linux` unchanged when the pacman/AUR package is
@@ -93,10 +94,8 @@ plain Teams web app. This work does not depend on it and does not change it.
   content-script behaviour and the loop guard), the XPI, and the migration.
 - A7. Running the migration twice leaves one `teams-join` entry per flags file and one copy
   of the `.desktop` (followed by one `update-desktop-database` per run so the scheme
-  resolves). On a box with Zen installed and no `/etc/zen/policies` yet, it leaves the Zen
-  policy installed once: one `sudo` call on the first run (`install -D` does the dir and
-  file together), none on the second. A box without Zen gets zero `sudo` calls and no
-  prompt.
+  resolves). The migration makes no `sudo` call and shows no prompt, with or without Zen: the
+  Zen policy ships as a package-owned file (Decision 8b), not through the migration.
 - A8. The content script injects on the three Teams hosts, finds the meeting (in the launcher
   `url=` parameter, the page query, or the URL fragment), and auto-navigates to
   `msteams://teams.microsoft.com/...` (the page host is dropped) at most once per meeting per
@@ -172,8 +171,8 @@ plain Teams web app. This work does not depend on it and does not change it.
   re-firing `msteams:` and looping. It matches the bare token, not `omarchyWebapp=1`
   (Decision 3).
 - `/etc/zen/policies/policies.json` force-installs the extension into every Zen profile.
-  Its directory is created mode 755, root-owned, never through the installer's
-  `chmod a+rw` helper.
+  pacman creates the directory and file at the package's mode (755 dir, 644 root-owned
+  file), never through the installer's `chmod a+rw` helper.
 - `xpinstall.signatures.required=false` in the Zen policy turns off AMO signature checking
   for every extension in Zen, not only ours. That is the real cost of shipping an unsigned
   XPI. The policy sets it `"Status": "default"`, so a user can restore it (accepting that
@@ -393,9 +392,12 @@ the one place that decides.
   `zen-browser-bin`'s shipped values at implementation, and drop either if the vendor stops
   shipping it.
 
-`omarchy-install-browser`'s Zen branch and the migration write the file to
-`/etc/zen/policies/policies.json` with a single `install -D -m 644`. That is one privileged
-call: it creates the mode-755 directory and the mode-644 file together.
+The `omarchy-settings` package ships this file to `/etc/zen/policies/policies.json` as a
+package-owned drop-in, alongside its other `/etc` files (Decision 8b). pacman places it on
+upgrade and Zen reads it on next start; no migration, installer, or `sudo` write. The file
+is authored here as `default/firefox/policies-zen.json`, beside the XPI it force-installs, so
+`install_url` and the pin test stay in one place; the `omarchy-settings` PKGBUILD sources it
+from there (the same out-of-repo PKGBUILD seam the icon and XPI already use).
 
 ## Decisions
 
@@ -414,10 +416,10 @@ call: it creates the mode-755 directory and the mode-644 file together.
 7. **Signing pref `Status: default`, not `locked`.** Disabling AMO checking is a real cost, so
    let the user restore it. If that trade-off is rejected, AMO self-distribution signing is
    the alternative. Open for John.
-8. **Zen policy delivery. Open for John.**
+8. **Zen policy delivery. Decided: (b), package-owned drop-in (2026-09-07).**
    - Options:
      - (a) The migration and installer write `/etc/zen/policies/policies.json` with
-       `sudo install -D` (the current plan).
+       `sudo install -D` (the earlier plan).
      - (b) Ship the file from the `omarchy-settings` package, which already owns `/etc`
        drop-ins like `/etc/docker/daemon.json` and `/etc/modprobe.d/` (this repo ships no
        `/etc` files; the package is a separate PKGBUILD).
@@ -441,8 +443,10 @@ call: it creates the mode-755 directory and the mode-644 file together.
      before the upgrade (the Phase 0 residue on the dev box; general users hit this only if
      they hand-placed a policy). An empty `/etc/zen` dir does not block pacman -- only an
      unowned file at the target path does.
-   - Recommended: (b). If taken, Phase 3 shrinks to the XPI, the policy file, the pin test,
-     and the hand-checks, and the migration/installer Zen findings drop.
+   - Decided: (b). Phase 3 shrinks to the XPI, the policy file, the pin test, and the
+     hand-checks; the migration, installer, and `omarchy-remove-browser` Zen steps and their
+     tests drop. The policy is authored at `default/firefox/policies-zen.json` and packaged
+     into `omarchy-settings` as `/etc/zen/policies/policies.json`.
 
 ## Plan
 
@@ -530,8 +534,8 @@ The migration, each step idempotent:
    `brave-origin-flags.conf`, which that loop's `brave-origin-beta` misses). Then echo
    "restart Chromium/Brave to load the Teams extension", since the flags edit only applies on
    the next browser start.
-3. The Zen policy step is Phase 3 (it needs Phase 3's `policies-zen.json` and XPI). Phase 2
-   is self-contained without it.
+3. No Zen policy step. The policy ships as a package-owned file via `omarchy-settings`
+   (Decision 8b), not through the migration; Phase 3 covers the policy file and XPI.
 
 Tests:
 
@@ -556,45 +560,31 @@ Tests:
 - Flags drift test.
 - Migration test, modelled on the tmux one: run twice, asserting one flags entry and one
   `.desktop` per run, one `update-desktop-database` call per run, and the `brave-origin`
-  entry. It stubs `omarchy-pkg-present` (Zen absent) and `update-desktop-database` on `PATH`
-  so `./test/all` never runs a real `sudo`/system write on a dev box that has Zen. The
-  Zen-present cases live in `firefox-teams-join-test.sh`.
+  entry. It stubs `update-desktop-database` on `PATH` so `./test/all` never runs a real
+  system write. The migration has no Zen policy step under (b), so there is no Zen case here.
 
 ### Phase 3. Zen wiring and end-to-end check (tests first)
 
 Files:
 
-- `default/firefox/policies-zen.json`
-- `default/firefox/teams-join.xpi`
-- `bin/omarchy-install-browser` (Zen branch)
-- The Zen policy step, added to the Phase 2 migration here. It is gated on
-  `omarchy-pkg-present zen-browser-bin`. The `cmp -s` runs unsudoed and skips when
-  `/etc/zen/policies/policies.json` already matches. It uses `install -D`, so a non-Zen box
-  and a matching second run make no `sudo` call. On an `install -D` failure (a denied or
-  timed-out `sudo`) the step prints a message pointing the user at `omarchy install browser
-  zen` and still exits 0. That follows the `migrations/*.sh` convention that a non-zero
-  migration aborts every migration queued behind it: a non-wheel user must not be blocked,
-  and that user re-runs the installer to get the policy.
-- `bin/omarchy-remove-browser` (Zen branch): add `sudo rm -rf /etc/zen` (the whole dir,
-  matching the Brave branch's `/etc/brave`). `omarchy-remove-browser` calls `sudo` directly,
-  not `as_root`, and the two Brave branches already `rm -rf` their policy dir.
+- `default/firefox/policies-zen.json` (authored here; the `omarchy-settings` package ships
+  it to `/etc/zen/policies/policies.json` as a package-owned file, Decision 8b).
+- `default/firefox/teams-join.xpi` (shipped by the `omarchy` package to
+  `/usr/share/omarchy/default/firefox/`, which the policy's `install_url` points at).
+- `omarchy-settings` PKGBUILD: add the policy file to its packaged `/etc` drop-ins (the
+  out-of-repo seam the icon already uses). No `omarchy-install-browser` or
+  `omarchy-remove-browser` change: pacman owns the file, so it lands on upgrade and is
+  removed when the package stops shipping it. A pre-existing unowned
+  `/etc/zen/policies/policies.json` (Phase 0 residue, or a hand-rolled policy) blocks the
+  upgrade until cleared, rather than being overwritten (Decision 8).
 - `test/shell.d/firefox-teams-join-test.sh`
-- `docs/file-layout.md`: a `default/firefox/*` row for the installer-written
-  `/etc/zen/policies/policies.json`.
+- `docs/file-layout.md`: a `default/firefox/policies-zen.json` row noting `omarchy-settings`
+  ships it to `/etc/zen/policies/policies.json`.
 
 Tests in `firefox-teams-join-test.sh`:
 
-- Migration Zen step, with a fake `sudo`. The test reads the Zen policy path from an env
-  override (default `/etc/zen/policies/policies.json`, as `migrations/1785273276.sh`
-  overrides its target) pointed at a temp dir, with `omarchy-pkg-present` stubbed on `PATH`.
-  The fake `sudo` logs then `exec`s, so the file is really written and the
-  matching-second-run case is observable. It asserts the `install -D`/`sudo` counts across
-  two runs: Zen-present-empty = one, Zen-present-matching = zero, Zen-absent = zero.
-- Installer Zen branch. Run `bin/omarchy-install-browser`'s zen branch with its helpers
-  stubbed (as `desktop-entry-launch-test.sh` does) and a logging fake `sudo`. Assert the
-  exact `install -D -m 644 .../policies-zen.json /etc/zen/policies/policies.json` call and
-  no `chmod a+rw`.
-- Policy and XPI test (python3, zipfile + json):
+- Policy and XPI test (python3, zipfile + json), reading `default/firefox/policies-zen.json`
+  and the XPI directly (no migration or installer to exercise under (b)):
   - The `ExtensionSettings` key equals `gecko.id`, and its `installation_mode` is exactly
     `force_installed` (not `normal_installed`, missing, or hyphenated, any of which would
     silently not force-install).
@@ -624,9 +614,10 @@ Hand-checks, A1–A5 on this machine:
 
 1. Pre-clean, so Phase 0 residue does not mask the shipped mechanism. Remove any
    `x-scheme-handler/msteams` pin from `~/.config/mimeapps.list` and any leftover `/etc/zen`.
-   Confirm `xdg-mime query default x-scheme-handler/msteams` is empty. Run the migration and
-   confirm the scheme resolves through `mimeinfo.cache` alone. This also makes the "no
-   `/etc/zen/policies` yet, one sudo" A7 case real.
+   A leftover unowned `/etc/zen/policies/policies.json` would block the `omarchy-settings`
+   upgrade that ships the real policy, so clearing it is required, not cosmetic. Confirm
+   `xdg-mime query default x-scheme-handler/msteams` is empty. Run the migration and confirm
+   the scheme resolves through `mimeinfo.cache` alone.
 2. Confirm the content script injects on the launcher page from the real `force_installed`
    `/etc/zen` policy on a fresh Zen profile (the Phase 1 Step 0 check; Phase 0 tested only a
    temporary add-on).
@@ -655,8 +646,9 @@ Hand-checks, A1–A5 on this machine:
     (Constraints).
 11. Confirm the Firefox `Preferences` block newly applied to Zen is benign (Design 4).
 
-Rollback, if the feature is later pulled: a migration removes the flags entry, the
-`.desktop`, and `/etc/zen/policies`.
+Rollback, if the feature is later pulled: a migration removes the flags entry and the
+`.desktop`; the `omarchy-settings` package stops shipping `/etc/zen/policies/policies.json`,
+so pacman removes it on upgrade.
 
 ## Phase 0 results
 
