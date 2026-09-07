@@ -513,15 +513,16 @@ A meeting link must open in the client whatever its shape and whatever its cloud
     never rewrites a gov, DoD, consumer, or `cloud.microsoft` host to `teams.microsoft.com`.
     What `teams-for-linux` then does with a gov/DoD host is its own concern (Decision 9): the
     guarantee covers what Omarchy emits and what the fallback opens, not the client's routing.
-11. **Query handling, consistent with Design 1's drop-list.** Design 1 already keeps the
-    meeting's query and drops named launcher parameters (`anon`, `deeplinkId`, `launchAgent`,
-    `enablemcas`, `suppressPrompt`). Keep that blacklist policy -- do not switch to a keep-only
-    whitelist. `p=` and `context=` are not in the drop-list, so they survive; the launcher's
-    routing keys (`type`, `directDl`, `msLaunch`, `enableMobilePage`, `fqdn`) join the
-    drop-list. The Plan reconciles the exact drop-list against the launcher JS (the research
-    confirms only `anon`, `deeplinkId`, `launchAgent`, `suppressPrompt`; the rest are named as
-    "such as", to be verified). The host carries the cloud, so `fqdn` is dropped and not needed
-    in the emitted URL.
+11. **Query handling -- settled contract, Design 1 mechanism.** The observable contract is
+    fixed: the emitted URL keeps the meeting's own `p=` and `context=` and drops every other
+    (launcher-added) query parameter. Tests assert exactly that kept set. The launcher adds
+    `anon`, `deeplinkId`, `launchAgent`, `suppressPrompt` (research-confirmed) plus routing keys
+    (`type`, `directDl`, `msLaunch`, `enableMobilePage`, `fqdn`), and `enablemcas` is already
+    dropped in Design 1 -- all fall away because they are not `p=` or `context=`. HOW the Plan
+    drops them is open (extending Design 1's existing named-drop-list to the launcher routing
+    keys yields this exact kept set, staying consistent with the classic path); the kept set
+    does not change. The host carries the cloud, so `fqdn` is dropped and not needed in the
+    emitted URL.
 12. **Both shapes reach both targets.** With `teams-for-linux` installed, both shapes reach it
     unchanged (Decision 4 stands, subject to Decision 11). Without it, both shapes open a
     web-app window on the original host with the `omarchyWebapp=1` marker, under the same
@@ -591,10 +592,11 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   membership) and the host-less v1 form `msteams:/<path>` settled Design 2 already takes (its
   web-app fallback uses the default host `teams.microsoft.com`). A host outside the list still
   lands on the Teams home page (the look-alike rule in Security holds).
-- A12. None of these fire: `/v2/?meetingjoin=true#/...` (except the latched launcher hop A8
-  already covers), `/light-meetings/launch`, `/convene/meetings`, `/l/meeting/new`, and every
-  non-meeting `/l/<type>/` in the Non-goals list. Tested on at least one commercial host and
-  one gov host.
+- A12. None of these fire: a `/v2/?meetingjoin=true#/...` URL whose fragment carries NO
+  recognised meeting path (a fragment that DOES carry a `/l/meetup-join/` or `/meet/` path
+  fires per A8 -- it is not a negative), `/light-meetings/launch`, `/convene/meetings`,
+  `/l/meeting/new`, and every non-meeting `/l/<type>/` in the Non-goals list. Tested on at least
+  one commercial host and one gov host.
 - A13. A launcher intermediary URL (`/dl/launcher/launcher.html?url=...&type=meet` and
   `...&type=meetup-join`) fires exactly once, on the meeting extracted from `url=`, with the
   launcher parameters in Requirement 11 dropped and `p=` or `context=` kept. A launcher URL
@@ -607,8 +609,11 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   on every host.
 - A15. `./test/all` covers each of the five verified hosts for both shapes, the A12 negative
   shapes plus A13's non-`meet`/`meetup-join` launcher case, and the launcher intermediary for
-  both meeting types. At least one `/meet/` case uses a non-numeric id (e.g.
-  `user@example.com`, per Requirement 7), so a digits-only short matcher fails. A `/meet/` case
+  both meeting types -- with at least one launcher-intermediary case on a gov/DoD host that
+  asserts the emitted `msteams:` host and the web-app fallback host stay on that cloud (so
+  launcher extraction cannot be hard-coded to `teams.microsoft.com`). At least one `/meet/`
+  case uses a non-numeric id (e.g. `user@example.com`, per Requirement 7), so a digits-only
+  short matcher fails. A `/meet/` case
   with `p=` asserts the passcode arrives unchanged and never lands in the throttle stamp or the
   latch key; a `/meet/` case without `p=` asserts it still fires and none is synthesized (the
   A9 and Security rules). The manifest test asserts the `content_scripts.matches` and
@@ -635,17 +640,22 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
     John.** Microsoft itself routes attendees to a web page for these. Whether the client
     should ever open them is unconfirmed. Firing a scheme on a page Microsoft treats as web
     risks a client that lands on nothing. Revisit only on a real report.
-11. **Emitted form is v2 (host-preserving); native-path translation is OPEN for the Plan.**
+11. **Emitted form is v2 (host-preserving); native-path handling is OPEN for the Plan.**
     The content script emits `msteams://<host>/<path>`: A10 requires the clicked host in the
     emitted URL and Requirement 11 drops `fqdn`, so pure host-less v1 (`msteams:/<path>`) is
     not an option -- it carries no cloud for the fallback to preserve. What the Plan settles is
-    the NATIVE path: does the handler forward the v2 URL to `teams-for-linux` unchanged
-    (Decision 4 -- works for the three commercial hosts its v2.20.0 regex matches; a gov/DoD
-    host is rejected there), or translate to the host-less `msteams:/<path>` that
-    `teams-for-linux` accepts in any cloud by loading `config.url + path`? The Plan must pick
-    one, state what a gov user with a correctly-configured `teams-for-linux` gets, and say
-    whether Decision 4 survives. The web-app fallback uses the preserved host either way. Any
-    option keeps the passcode and cloud handling in the Security notes below.
+    the NATIVE path to `teams-for-linux`. The client's own matching (research): its v2 regex
+    accepts the three commercial+consumer hosts `teams.microsoft.com`, `teams.live.com`,
+    `teams.cloud.microsoft` and rejects gov/DoD; its host-less v1 form loads the path against
+    the client's single `config.url` (default `teams.cloud.microsoft`), which DROPS the
+    original cloud. So a global v1 translation would REGRESS a `teams.live.com` consumer link
+    (and any host != `config.url`) even though the client would have accepted its v2 form. The
+    Plan therefore handles the native path per-host: forward v2 for the three hosts the client
+    matches, and for gov/DoD either leave it to the user's `teams-for-linux` config (Decision 9)
+    or translate to v1 knowing the client routes it via `config.url`. State what a gov user with
+    a correctly-configured client gets, and whether Decision 4 (forward unchanged) survives. The
+    web-app fallback uses the preserved host regardless, and any option keeps the passcode and
+    cloud handling in the Security notes below.
 12. **21Vianet host, best-effort. Recommended: include in the host set, flag unverified, no
     acceptance criterion. Open for John.** Cost: one more host pattern in the manifest and
     handler, and one more possible "open msteams?" prompt. Risk: none new, since the script
@@ -686,6 +696,7 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 | spec addition | grok-review | 1 | 5 (0 P1, 3 P2, 2 P3) | 5; Decision 11 reframed (A10+Req11 already rule out host-less v1 -> emit v2, native-path translation open); A11/A15 narrowed to 5 verified hosts (21Vianet membership only); A9 covers no-passcode /meet/; A14 folds /meet/ id encoding; A15 negatives point at A12/A13 |
 | spec addition | grok-review | 2 | 3 (0 P1, 2 P2, 1 P3) | 3; scoped Req10/A9/A10 to what Omarchy emits + fallback, qualified native gov/DoD with Decision 9 (teams-for-linux can't do both host-preserve and gov/DoD open); A15 requires a non-numeric /meet/ id case; Req11 drop-list marked non-exhaustive, Plan pins vs launcher JS |
 | spec addition | grok-review | 3 (cap) | 6 (0 P1, 3 P2, 3 P3) | 6; extension-vs-settled-base consistency: /v2/ non-goal narrowed (a /v2/ fragment carrying a meeting still fires per A8, latch only blocks the repeat); A5.1/A11 keep the host-less v1 form Design 2 accepts; A15 pins the p= security rules; A10 "emitted"=content-script URL (Decision 11 owns native argv); Req11 = Design 1 blacklist not keep-only; Constraints "up to three" prompt bound in the edit list. Cap reached |
+| spec addition | codex-review (Sol, gpt-5.6-sol) | 1 | 4 (0 P1, 4 P2) | 4; A12 /v2/ negative narrowed to fragments with no meeting (matches A8); Decision 11 now per-host (global v1 would regress teams.live.com consumer + non-config.url clouds -- tfl v2 accepts commercial+consumer, rejects gov/DoD); A15 adds a gov/DoD launcher case asserting host preservation; Req11 settled the kept-set contract {p,context}, HOW open |
 
 
 ## Plan
