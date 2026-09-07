@@ -400,8 +400,8 @@ The repo path mirrors the install path, so authoring `etc/zen/policies/policies.
 whole change: pacman places it on upgrade, Zen reads it next start, and no migration,
 installer, or `sudo` write is involved. Confirm at implementation that `etc/**` is packaged by
 a glob so the new file is picked up automatically; add an explicit PKGBUILD line only if it is
-not. The file must NOT be listed in the package's `backup=` array (unlike the other 26 `/etc`
-drop-ins): `ExtensionSettings` has to track the package, so the shipped version must win on
+not. The file must NOT be listed in the package's `backup=` array (unlike the package's other
+`/etc` drop-ins): `ExtensionSettings` has to track the package, so the shipped version must win on
 every upgrade. The cost is that a user's hand-edits to this file are overwritten on the next
 `omarchy-settings` upgrade, not preserved as `.pacnew` -- acceptable, since Zen reads a single
 policy file with no `.d` merge, so Omarchy owns Zen's whole policy surface regardless.
@@ -429,7 +429,7 @@ policy file with no `.d` merge, so Omarchy owns Zen's whole policy surface regar
        `sudo install -D` (the earlier plan).
      - (b) Ship the file from the `omarchy-settings` package via the repo's
        `etc/** -> /etc/**` mapping, the same path as `/etc/docker/daemon.json` and the other
-       32 `/etc` drop-ins this repo already carries.
+       `/etc` drop-ins this repo already carries.
    - What (b) removes: the migration's Zen step, the installer write, the
      `omarchy-remove-browser` cleanup, the fake-`sudo` test, A7's sudo accounting, and the
      non-wheel-user failure mode. pacman drops the file on `omarchy-settings` upgrade, Zen
@@ -630,15 +630,18 @@ The Zen checks (2, 7, 10, 11) need the real files on the box: the `force_install
 `/etc/zen/policies/policies.json` and the XPI at the fixed `install_url`. `omarchy dev link`
 does not cover `/etc` or the fixed `default/**` install path, so build and install the package
 from the worktree with `omarchy dev pkg-test omarchy-settings <worktree>` (needs the
-`omarchy-pkgs` PKGBUILD checkout) -- this is also the only real test of the packaging seam.
-Assert with `pacman -Qo /etc/zen/policies/policies.json`. Hand-placing the two files with
-`sudo install -D` instead leaves both unowned, and both then block the next
-`omarchy-settings` upgrade until removed.
+`omarchy-pkgs` PKGBUILD checkout). That exercises the glob pickup and ownership -- assert with
+`pacman -Qo /etc/zen/policies/policies.json`. But `pkg-test` installs with `--overwrite='*'`,
+so pre-clean any residue at that path first, or it silently adopts the residue and the check
+proves nothing. The unowned-file refusal (Decision 8) shows only on the real
+`omarchy-update-system-pkgs` path, not under `pkg-test`; to see it, hand-place the two files
+with `sudo install -D` (leaving both unowned) and run the real update. After the checks,
+reinstall the release `omarchy-settings` to undo the `-dev` package.
 
 1. Pre-clean, so Phase 0 residue does not mask the shipped mechanism. Remove any
    `x-scheme-handler/msteams` pin from `~/.config/mimeapps.list` and any leftover `/etc/zen`.
-   A leftover unowned `/etc/zen/policies/policies.json` would block the `omarchy-settings`
-   upgrade that ships the real policy, so clearing it is required, not cosmetic. Confirm
+   A leftover unowned `/etc/zen/policies/policies.json` would block a real `omarchy-settings`
+   upgrade (though not `pkg-test`'s `--overwrite`), so clearing it is required, not cosmetic. Confirm
    `xdg-mime query default x-scheme-handler/msteams` is empty. Run the migration and confirm
    the scheme resolves through `mimeinfo.cache` alone.
 2. Confirm the content script injects on the launcher page from the real `force_installed`
@@ -723,3 +726,4 @@ superseded `webNavigation` design; those clearances do not carry to this design.
 | spec+plan | fable-review (for Sol) | 1 | 11 (1 blocker, 5 should-fix, 5 nit) | 10; nit "de-dup loop-guard rationale" surfaced to John |
 | spec+plan | fable-review (for Sol) | 2 | 11 (0 blocker, 6 should-fix, 5 nit) | 11; Decision 8 (package-owned /etc) open for John |
 | plan (Decision 8b) | fable-review (for Sol) | 1 (delta) | 6 (0 blocker, 6 should-fix) | 6; caught that both XPI and /etc ship from omarchy-settings, not omarchy -- authoring moved to etc/zen/policies/policies.json, backup= and blast-radius noted |
+| plan (Decision 8b) | fable-review (for Sol) | 2 (delta, verify) | 3 (0 blocker, 1 should-fix, 2 nit) | 3; round-1 fixes all landed clean; noted pkg-test's --overwrite can't show the unowned-file refusal, dropped drift-prone counts. Clean |
