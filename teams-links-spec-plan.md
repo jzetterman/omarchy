@@ -486,6 +486,19 @@ Step 0, before any test code: settle the two residuals that can fork the design.
    and may race the launch. Keep it only if the launch fires every time (a blank leftover tab
    is acceptable). Else drop it from Design 1 and the tests.
 
+**Step 0 result (2026-09-07, John-run on Zen 1.22b): both PASS.** A fresh Zen profile with
+the real `force_installed` `/etc/zen/policies/policies.json` (the reviewed content script,
+zipped, unsigned, `Status: default` signing pref) injected the content script on the Teams
+host -- so the policy install path is not the broken one Phase 0 saw for `webNavigation`.
+**MV3 stands; the MV2-for-Zen fork is closed.** With `teams-for-linux` absent, a real meeting
+fired `msteams:` through the content script and our handler opened the web-app window on the
+meeting, so `window.stop()` did not cancel the launch: **keep `window.stop()`** (no change to
+Design 1 or the tests). Tested against the real Omarchy Teams web app (PR omacom/omarchy#10367)
+and our Phase 1 handler, not a stub. Side result: that PR's web app confirms the installed
+icon name is `microsoft-teams` (from the `homarr-labs/dashboard-icons` CDN), matching our
+`.desktop`'s `Icon=microsoft-teams` -- the Phase 1 icon-name open item is settled; only the
+real PNG asset remains.
+
 Files:
 
 - `bin/omarchy-webapp-handler-teams`
