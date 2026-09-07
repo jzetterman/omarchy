@@ -159,17 +159,16 @@ if base == "none":
   ok("version bump check skipped")
   sys.exit(0)
 
-base_rel = "default/chromium/extensions/teams-join/manifest.json"
-content_rel = "default/chromium/extensions/teams-join/content.js"
+ext_rel = "default/chromium/extensions/teams-join"
+base_rel = f"{ext_rel}/manifest.json"
 base_manifest = git_show(base, base_rel)
 if base_manifest is None:
   ok(f"new extension: no base manifest on {base}")
   sys.exit(0)
 
 changed = False
-for rel in (base_rel, content_rel):
-  base_bytes = git_show(base, rel)
-  current_bytes = (root / rel).read_bytes()
+for name, current_bytes in source_files.items():
+  base_bytes = git_show(base, f"{ext_rel}/{name}")
   if base_bytes != current_bytes:
     changed = True
 
