@@ -1,0 +1,35 @@
+#!/bin/bash
+# omarchy:summary=Open Teams meetings from browser protocol links
+# omarchy:args=[url]
+url="$1"; path=""
+if [[ $url =~ ^msteams:/*teams\.(microsoft\.com|live\.com|cloud\.microsoft)/(l/meetup-join/19(:|%3[aA])[^[:space:]]+)$ ]]; then  # any leading slashes: msteams:teams. .. msteams:///teams.
+  host="teams.${BASH_REMATCH[1]}"; path="${BASH_REMATCH[2]}"
+elif [[ $url =~ ^msteams:/*(l/meetup-join/19(:|%3[aA])[^[:space:]]+)$ ]]; then  # any leading slashes, host-less: msteams:l/.. msteams:///l/..
+  host="teams.microsoft.com"; path="${BASH_REMATCH[1]}"
+fi
+# --gtk-version=3 mirrors the flag in teams-for-linux's own packaged .desktop Exec.
+if omarchy-cmd-present teams-for-linux; then
+  if [[ $url == msteams:* ]]; then exec setsid uwsm-app -- teams-for-linux --gtk-version=3 "$url"
+  else exec setsid uwsm-app -- teams-for-linux --gtk-version=3; fi
+fi
+if [[ -n $path ]]; then
+  # Origin-independent loop backstop: refuse a second web-app window for the same meeting
+  # within ~20s. The content-script latch is per origin; a cross-origin launcher hop that
+  # drops the marker (teams.microsoft.com -> teams.cloud.microsoft) would otherwise re-enter.
+  # Normalize the id the way the content script normalizes its key, so the same meeting in
+  # different encodings (launcher-decoded %3a/%40 vs raw :/@) maps to one id.
+  id="${path%%\?*}"; id="${id%%#*}"; id="${id//%3a/:}"; id="${id//%3A/:}"; id="${id//%40/@}"
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy"
+  stamp="$state/teams-join-last"; now=$(printf '%(%s)T' -1)
+  if [[ -f $stamp ]]; then read -r last_id last_t < "$stamp" || true
+    [[ $last_id == "$id" ]] && (( now >= last_t && now - last_t < 20 )) && exit 0  # now>=last_t: a future stamp (clock stepped back) must not swallow
+  fi
+  mkdir -p "$state"; printf '%s %s\n' "$id" "$now" > "$stamp.$$" && mv -f "$stamp.$$" "$stamp"  # atomic; rare simultaneous same-meeting click can still open two
+  web_url="https://$host/$path"; fragment=""
+  [[ $web_url == *#* ]] && fragment="#${web_url#*#}" && web_url="${web_url%%#*}"
+  [[ $web_url == *\?* ]] && web_url+="&omarchyWebapp=1" || web_url+="?omarchyWebapp=1"
+  web_url+="$fragment"
+else
+  web_url="https://teams.microsoft.com/"
+fi
+exec omarchy-launch-webapp "$web_url"
