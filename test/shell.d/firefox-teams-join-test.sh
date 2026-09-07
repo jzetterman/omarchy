@@ -50,6 +50,25 @@ def git_show(treeish, relpath):
   return result.stdout
 
 
+# Compare current source bytes to a base snapshot without touching git.
+# Returns (passed, description, detail). Fails when any current file differs
+# from base and manifest.version is unchanged.
+def check_version_bump(base_files, current_files, base_version, current_version, base_label="base"):
+  changed = False
+  for name, current_bytes in current_files.items():
+    if base_files.get(name) != current_bytes:
+      changed = True
+  if changed and base_version == current_version:
+    return (
+      False,
+      "bump the version",
+      f"teams-join source changed from {base_label} but manifest.version is still {current_version}",
+    )
+  if changed:
+    return True, "teams-join version bumped", ""
+  return True, "teams-join version matches base (source unchanged)", ""
+
+
 if not zen_policy_path.is_file():
   fail("Zen policy exists", str(zen_policy_path))
 if not xpi_path.is_file():
@@ -155,6 +174,44 @@ with zipfile.ZipFile(xpi_path) as zf:
       fail(f"XPI member {name} matches source bytes")
 ok("XPI members match source file names and bytes")
 
+# Fixture-driven version-bump enforcement, independent of git refs.
+old_js = b"old content.js"
+new_js = b"new content.js"
+same_js = b"same content.js"
+
+passed, desc, detail = check_version_bump(
+  {"content.js": old_js, "manifest.json": b'{"version":"0.1"}'},
+  {"content.js": new_js, "manifest.json": b'{"version":"0.1"}'},
+  "0.1",
+  "0.1",
+  "fixture-base",
+)
+if passed:
+  fail("changed source + unchanged version must fail", detail or desc)
+if desc != "bump the version":
+  fail("changed source + unchanged version reports bump the version", f"got {desc!r}")
+ok("changed source + unchanged version reports bump the version")
+
+passed, desc, detail = check_version_bump(
+  {"content.js": old_js},
+  {"content.js": new_js},
+  "0.1",
+  "0.2",
+)
+if not passed:
+  fail("changed source + bumped version must pass", detail or desc)
+ok("changed source + bumped version passes")
+
+passed, desc, detail = check_version_bump(
+  {"content.js": same_js, "manifest.json": b'{"version":"0.1"}'},
+  {"content.js": same_js, "manifest.json": b'{"version":"0.1"}'},
+  "0.1",
+  "0.1",
+)
+if not passed:
+  fail("unchanged source must pass", detail or desc)
+ok("unchanged source passes without a version bump")
+
 if base == "none":
   ok("version bump check skipped")
   sys.exit(0)
@@ -166,21 +223,13 @@ if base_manifest is None:
   ok(f"new extension: no base manifest on {base}")
   sys.exit(0)
 
-changed = False
-for name, current_bytes in source_files.items():
-  base_bytes = git_show(base, f"{ext_rel}/{name}")
-  if base_bytes != current_bytes:
-    changed = True
-
+base_files = {name: git_show(base, f"{ext_rel}/{name}") for name in source_files}
 base_version = json.loads(base_manifest.decode())["version"]
 current_version = manifest["version"]
-if changed and base_version == current_version:
-  fail(
-    "bump the version",
-    f"teams-join source changed from {base} but manifest.version is still {current_version}",
-  )
-if changed:
-  ok("teams-join version bumped")
-else:
-  ok("teams-join version matches base (source unchanged)")
+passed, desc, detail = check_version_bump(
+  base_files, source_files, base_version, current_version, base
+)
+if not passed:
+  fail(desc, detail)
+ok(desc)
 PY
