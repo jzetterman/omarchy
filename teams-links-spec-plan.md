@@ -418,15 +418,29 @@ call: it creates the mode-755 directory and the mode-644 file together.
    - Options:
      - (a) The migration and installer write `/etc/zen/policies/policies.json` with
        `sudo install -D` (the current plan).
-     - (b) Ship a package-owned `etc/zen/policies/policies.json` drop-in, as the repo
-       already ships `etc/docker/` and `etc/modprobe.d/`.
+     - (b) Ship the file from the `omarchy-settings` package, which already owns `/etc`
+       drop-ins like `/etc/docker/daemon.json` and `/etc/modprobe.d/` (this repo ships no
+       `/etc` files; the package is a separate PKGBUILD).
    - What (b) removes: the migration's Zen step, the installer write, the
      `omarchy-remove-browser` cleanup, the fake-`sudo` test, A7's sudo accounting, and the
      non-wheel-user failure mode. pacman drops the file on `omarchy-settings` upgrade, Zen
      reads it next start, nothing else touches `/etc/zen`.
+   - Overwrite safety: (b) cannot silently clobber a user's own Zen policy. Omarchy has
+     never written to `/etc/zen/policies/`; its current Zen policy goes to
+     `/opt/zen-browser/distribution/policies.json` (a separate path, and a broken one --
+     Zen reads `/etc/zen/policies/` via `MOZ_SYSTEM_POLICIES`), so no existing Omarchy file
+     collides. If a user hand-placed a policy there, pacman refuses to overwrite an unowned
+     file: it halts the `omarchy-settings` upgrade with `exists in filesystem, owned by no
+     package` rather than replacing it. Contrast (a): `sudo install`/`cp -f` overwrites a
+     hand-rolled policy silently, so (b) is the safer of the two here. Caveat common to both:
+     `/etc/zen/policies/policies.json` is a single file (Gecko has no `.d` merge for
+     policies), so Omarchy owns Zen's whole policy surface either way -- a user wanting their
+     own Zen policy must merge into ours.
    - What (b) costs: a 1KB inert file on non-Zen boxes, the out-of-repo PKGBUILD dependency
-     the icon and XPI already have, and pre-cleaning the Phase 0 `/etc/zen` residue before
-     the upgrade (pacman will not overwrite an unowned file).
+     the icon and XPI already have, and pre-cleaning any unowned `/etc/zen/policies/policies.json`
+     before the upgrade (the Phase 0 residue on the dev box; general users hit this only if
+     they hand-placed a policy). An empty `/etc/zen` dir does not block pacman -- only an
+     unowned file at the target path does.
    - Recommended: (b). If taken, Phase 3 shrinks to the XPI, the policy file, the pin test,
      and the hand-checks, and the migration/installer Zen findings drop.
 
