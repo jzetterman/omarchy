@@ -508,13 +508,18 @@ A meeting link must open in the client whatever its shape and whatever its cloud
    `url=` parameter after one decode and after stripping the leading `/_#`. The script fires
    once on the extracted meeting, not on the launcher URL itself. `type=meet` and
    `type=meetup-join` are the only launcher types that are meetings.
-10. **Preserve the cloud.** The host the user clicked is the host that reaches the client and
-    the web-app fallback. Nothing rewrites a gov, DoD, consumer, or `cloud.microsoft` host to
-    `teams.microsoft.com`. The web-app fallback opens `https://<original-host>/<path>`.
+10. **Preserve the cloud in what Omarchy emits.** The emitted `msteams:` URL names the host
+    the user clicked, and the web-app fallback opens `https://<original-host>/<path>`. Omarchy
+    never rewrites a gov, DoD, consumer, or `cloud.microsoft` host to `teams.microsoft.com`.
+    What `teams-for-linux` then does with a gov/DoD host is its own concern (Decision 9): the
+    guarantee covers what Omarchy emits and what the fallback opens, not the client's routing.
 11. **Query handling.** Keep the meeting's own `p=` and `context=`. Drop the launcher's added
-    parameters wherever they sit: `anon`, `deeplinkId`, `launchAgent`, `suppressPrompt`,
-    `type`, `directDl`, `msLaunch`, `enableMobilePage`, `fqdn`, and `enablemcas`. The host
-    itself carries the cloud, so `fqdn` is not needed in the emitted URL.
+    parameters -- the research confirms `anon`, `deeplinkId`, `launchAgent`, and
+    `suppressPrompt`; the launcher also adds routing params such as `type`, `directDl`,
+    `msLaunch`, `enableMobilePage`, `fqdn`, and `enablemcas` (the last already dropped in
+    Design 1). Treat this as the known set, not proof it is exhaustive: the Plan pins the exact
+    drop-set against the launcher JS, keeping only `p=` and `context=` as meeting-meaningful.
+    The host itself carries the cloud, so `fqdn` is not needed in the emitted URL.
 12. **Both shapes reach both targets.** With `teams-for-linux` installed, both shapes reach it
     unchanged (Decision 4 stands, subject to Decision 11). Without it, both shapes open a
     web-app window on the original host with the `omarchyWebapp=1` marker, under the same
@@ -561,14 +566,17 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 
 ### Acceptance criteria (continues A1-A8)
 
-- A9. A `/meet/<id>` link on each of the five verified hosts in Requirement 8 opens the
-  meeting in `teams-for-linux` when installed, else in a web-app window, whether or not it
-  carries `?p=<passcode>` (consumer Meet-now links omit it). When `p=` is present it arrives
-  unchanged at whichever target opens; when absent, none is synthesized. One fire per meeting
-  per tab, per A8.
+- A9. A `/meet/<id>` link on each of the five verified hosts in Requirement 8 fires, whether
+  or not it carries `?p=<passcode>` (consumer Meet-now links omit it). With `teams-for-linux`
+  installed it reaches the client (on gov/DoD this opens the meeting only when the user's
+  `teams-for-linux` is configured for that cloud, Decision 9); without it, a web-app window
+  opens on the meeting. When `p=` is present it arrives unchanged at whichever target opens;
+  when absent, none is synthesized. One fire per meeting per tab, per A8.
 - A10. A classic link on `gov.teams.microsoft.us` or `dod.teams.microsoft.us`, including a
   `19:dod:meeting_...` thread id, fires. The emitted `msteams:` URL and the web-app fallback
-  both stay on the clicked host. Nothing in the chain substitutes `teams.microsoft.com`.
+  both stay on the clicked host; Omarchy never substitutes `teams.microsoft.com` in what it
+  emits. The web-app fallback opens the correct cloud unconditionally; the native client's
+  cloud follows the user's `teams-for-linux` config on gov/DoD (Decision 9).
 - A11. For each of the five verified hosts in Requirement 8, the web-app fallback opens
   `https://<original-host>/<path>` plus the `omarchyWebapp=1` marker, for both shapes. The
   handler accepts an `msteams:` URL that names any listed host (21Vianet included, as
@@ -590,9 +598,11 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   on every host.
 - A15. `./test/all` covers each of the five verified hosts for both shapes, the A12 negative
   shapes plus A13's non-`meet`/`meetup-join` launcher case, and the launcher intermediary for
-  both meeting types. The manifest test asserts the `content_scripts.matches` and
-  `host_permissions` sets equal the Requirement 8 host set exactly (21Vianet included, since
-  that is host membership), still `https://` only, still no `<all_urls>`.
+  both meeting types. At least one `/meet/` case uses a non-numeric id (e.g.
+  `user@example.com`, per Requirement 7), so a digits-only short matcher fails. The manifest
+  test asserts the `content_scripts.matches` and `host_permissions` sets equal the Requirement
+  8 host set exactly (21Vianet included, since that is host membership), still `https://` only,
+  still no `<all_urls>`.
 
 ### Decisions (continues 1-8)
 
@@ -663,6 +673,7 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 | Gate | Stage | Round | Findings | Integrated |
 |------|-------|-------|----------|------------|
 | spec addition | grok-review | 1 | 5 (0 P1, 3 P2, 2 P3) | 5; Decision 11 reframed (A10+Req11 already rule out host-less v1 -> emit v2, native-path translation open); A11/A15 narrowed to 5 verified hosts (21Vianet membership only); A9 covers no-passcode /meet/; A14 folds /meet/ id encoding; A15 negatives point at A12/A13 |
+| spec addition | grok-review | 2 | 3 (0 P1, 2 P2, 1 P3) | 3; scoped Req10/A9/A10 to what Omarchy emits + fallback, qualified native gov/DoD with Decision 9 (teams-for-linux can't do both host-preserve and gov/DoD open); A15 requires a non-numeric /meet/ id case; Req11 drop-list marked non-exhaustive, Plan pins vs launcher JS |
 
 
 ## Plan
