@@ -543,6 +543,10 @@ Edits to existing text this implies (the Plan applies them):
   the Constraints prompt bound "up to three" times becomes "up to the size of the host set".
 - Design 1 and Design 2 notes that say the script "always rebuilds to `teams.microsoft.com`"
   are superseded by Requirement 10.
+- Requirement 2's "No configuration beyond installing `teams-for-linux`" is scoped to the
+  commercial and consumer clouds; a GCC High or DoD user must also point `teams-for-linux` at
+  their cloud in its own config (A9, Decision 9). The web-app fallback needs no configuration
+  on any cloud.
 
 ### Non-goals (updated)
 
@@ -591,8 +595,11 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   `https://<original-host>/<path>` plus the `omarchyWebapp=1` marker, for both shapes. The
   handler accepts an `msteams:` URL that names any listed host (21Vianet included, as
   membership) and the host-less v1 form `msteams:/<path>` settled Design 2 already takes (its
-  web-app fallback uses the default host `teams.microsoft.com`). A host outside the list still
-  lands on the Teams home page (the look-alike rule in Security holds).
+  web-app fallback uses the default host `teams.microsoft.com`). On the WEB-APP FALLBACK path
+  (no `teams-for-linux`), a host outside the list lands on the Teams home page (the look-alike
+  rule in Security). This host validation is fallback-only: with `teams-for-linux` installed,
+  Decision 4 still forwards every `msteams:` URL unchanged, unlisted host included, so host
+  checking must not move ahead of native forwarding (that would regress Requirement 5).
 - A12. None of these fire: a `/v2/?meetingjoin=true#/...` URL whose fragment carries NO
   recognised meeting path (a fragment that DOES carry a `/l/meetup-join/` or `/meet/` path
   fires per A8 -- it is not a negative), `/light-meetings/launch`, `/convene/meetings`,
@@ -607,7 +614,13 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   meeting the way they treat a classic one. A `/meet/` id and a classic thread id for the
   same meeting are different keys; unifying them is not required. Two encodings of one id --
   classic or short (a `/meet/` id can contain `@`, folded from `%40`) -- still map to one key
-  on every host.
+  on every host. Throttle identity is cloud-aware: it stays host-independent WITHIN a cloud so
+  the `teams.microsoft.com` -> `teams.cloud.microsoft` cross-origin hop for one meeting still
+  collapses to one launch (those two are the same commercial cloud), but the SAME `/meet/` id
+  on distinct clouds (`teams.live.com`, `gov.`, `dod.`, `.cn`) is a different meeting and both
+  must fire -- so the throttle key is the normalized id plus its cloud class, with
+  `{teams.microsoft.com, teams.cloud.microsoft}` the one shared class. A test opens the same id
+  on a commercial and a gov host within the window and asserts both fire.
 - A15. `./test/all` covers each of the five verified hosts for both shapes, the A12 negative
   shapes plus A13's non-`meet`/`meetup-join` launcher case, and the launcher intermediary for
   both meeting types -- with at least one launcher-intermediary case on a gov/DoD host that
@@ -668,15 +681,20 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
     handler, and one more possible "open msteams?" prompt. Risk: none new, since the script
     fires only on the two meeting shapes. If the cloud's link shapes differ, the script does
     nothing there, which is today's behaviour. The alternative is to leave it out until a user
-    asks. Either is fine; include is the smaller later change.
+    asks. Either is fine; include is the smaller later change. Native routing for a matched
+    `.cn` link follows the same best-effort as gov/DoD (Decision 11): `teams-for-linux`'s v2
+    regex excludes `teams.microsoftonline.cn` too, so the Plan either keeps it host-ful,
+    translates to v1, or relies on the user's client override -- no acceptance criterion, same
+    as its shape verification.
 
 ### Constraints and Security notes (deltas)
 
 - **Wider host set.** `content_scripts.matches` and `host_permissions` grow from three hosts
   to the Requirement 8 set (five, six with 21Vianet). Still exact `https://` hosts, still no
-  `<all_urls>`, still no `tabs`, `webNavigation`, or background. The handler's host allow-list
-  grows to the same set and still rejects anything else, so a look-alike host still becomes
-  the home page, never a meeting window.
+  `<all_urls>`, still no `tabs`, `webNavigation`, or background. On the web-app fallback path
+  the handler's host allow-list grows to the same set and still rejects anything else, so a
+  look-alike host becomes the home page, never a meeting window; the native path forwards every
+  `msteams:` unchanged (Decision 4), so this host check is fallback-only (A11).
 - **More one-time prompts.** The browser's "always allow" is keyed per origin. A user who
   meets links on several clouds sees the prompt once per host they hit, up to the size of the
   host set. Same behaviour as today, larger bound. Not ours to suppress.
@@ -712,6 +730,7 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 | spec addition | grok-review | 3 (cap) | 6 (0 P1, 3 P2, 3 P3) | 6; extension-vs-settled-base consistency: /v2/ non-goal narrowed (a /v2/ fragment carrying a meeting still fires per A8, latch only blocks the repeat); A5.1/A11 keep the host-less v1 form Design 2 accepts; A15 pins the p= security rules; A10 "emitted"=content-script URL (Decision 11 owns native argv); Req11 = Design 1 blacklist not keep-only; Constraints "up to three" prompt bound in the edit list. Cap reached |
 | spec addition | codex-review (Sol, gpt-5.6-sol) | 1 | 4 (0 P1, 4 P2) | 4; A12 /v2/ negative narrowed to fragments with no meeting (matches A8); Decision 11 now per-host (global v1 would regress teams.live.com consumer + non-config.url clouds -- tfl v2 accepts commercial+consumer, rejects gov/DoD); A15 adds a gov/DoD launcher case asserting host preservation; Req11 settled the kept-set contract {p,context}, HOW open |
 | spec addition | codex-review (Sol) | 2 | 4 (0 P1, 3 P2, 1 P3) | 4; marker check must scope to the marker query param (a /meet/ id/passcode containing "omarchyWebapp" must still fire) + collision test; Req11 -> ALLOW-LIST (resolves grok-blacklist vs codex-exact-set: allow-list required for an exact testable contract) + unknown-key test; exclusion tests must embed a valid meeting in url= (bare /convene/ proves nothing); Problem: only gov/DoD newly non-injecting (teams.live.com already injects) |
+| spec addition | codex-review (Sol) | 3 (cap) | 4 (0 P1, 4 P2) | 4; Req2 "no config" scoped to commercial/consumer (gov/DoD need client config, A9/Dec9); A11 + Security host-rejection is FALLBACK-ONLY (native forwards every msteams unchanged, Dec4, or regresses Req5); A14 throttle identity is cloud-aware ({microsoft.com,cloud.microsoft} one class, live/gov/dod/cn distinct -- same id on distinct clouds both fire); Decision 12 gives .cn the same best-effort native routing as gov/DoD. Cap reached |
 
 
 ## Plan
