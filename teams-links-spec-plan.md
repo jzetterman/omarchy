@@ -112,17 +112,17 @@ plain Teams web app. This work does not depend on it and does not change it.
   `defaults/preferences/firefox.js` overrides it to true, and the app default wins. So the
   unsigned `force_installed` XPI will not install unless the policy sets the pref false.
   Zen's policy engine allows that pref because `MOZ_REQUIRE_SIGNING` is false
-  (`Policies.sys.mjs` pushes it into `allowedPrefixes`). `policies-zen.json` sets it with
+  (`Policies.sys.mjs` pushes it into `allowedPrefixes`). The Zen policy sets it with
   `"Status": "default"`, so a user can restore AMO checking (see Security).
   Firefox release refuses unsigned XPIs and would retry on every start, so it must not get
   this policy. Supporting Firefox proper needs Mozilla signing and is out of scope.
 - Zen sets `MOZ_SYSTEM_POLICIES` and `MOZ_APP_NAME=zen`. It reads
   `/etc/zen/policies/policies.json` first and ignores the package-owned
   `/opt/zen-browser-bin/distribution/policies.json` when the `/etc` file exists. Omarchy
-  owns the `/etc` file outright (`install -m 644`, no merge). The old
-  `omarchy-install-browser` wrote `/opt/zen-browser/distribution`, a path nothing reads (Zen
-  reads `/opt/zen-browser-bin/distribution`). This work writes the `/etc` path instead. The
-  old `/opt/zen-browser/distribution` file is harmless and stays in place.
+  ships the `/etc` file package-owned via `omarchy-settings` (Decision 8b), so nothing writes
+  it at runtime. The old `omarchy-install-browser` wrote `/opt/zen-browser/distribution`, a
+  path nothing reads (Zen reads `/opt/zen-browser-bin/distribution`). That old file is
+  harmless and stays in place.
 - One extension source tree, used by both browser families. Firefox needs
   `browser_specific_settings.gecko.id`; Chromium ignores it. The extension is content-script
   only (no background), so the manifest-v3 vs event-page split that sank the earlier design
@@ -370,7 +370,7 @@ the one place that decides.
 
 ### 4. Firefox / Zen packaging
 
-`default/firefox/policies-zen.json` carries:
+`etc/zen/policies/policies.json` (authored in the repo, shipped by `omarchy-settings`) carries:
 
 - Omarchy's Firefox `Preferences` block: the Wayland and media tweaks
   `apz.overscroll.enabled`, `media.ffmpeg.vaapi.enabled`,
@@ -383,8 +383,10 @@ the one place that decides.
 - `xpinstall.signatures.required=false` (`Status: default`, required; see Constraints and
   Security).
 - `ExtensionSettings` force-installing the XPI by its `gecko.id`, with `install_url` the
-  fixed system path `file:///usr/share/omarchy/default/firefox/teams-join.xpi` (where
-  `default/**` installs; the Phase 0 spike used the worktree path).
+  fixed system path `file:///usr/share/omarchy/default/firefox/teams-join.xpi`, where the
+  `default/**` mapping installs it. The XPI ships from `omarchy-settings` too, the same
+  package as this policy, so `install_url` can never point at an XPI from a mismatched package
+  version. The Phase 0 spike used the worktree path.
 - The two keys `zen-browser-bin` already ships in its own `distribution/policies.json`:
   `DisableAppUpdate` (Zen is updated by pacman/AUR, not by itself) and
   `DefaultSerialGuardSetting` (its Web Serial default). They are carried forward because the
@@ -392,12 +394,17 @@ the one place that decides.
   `zen-browser-bin`'s shipped values at implementation, and drop either if the vendor stops
   shipping it.
 
-The `omarchy-settings` package ships this file to `/etc/zen/policies/policies.json` as a
-package-owned drop-in, alongside its other `/etc` files (Decision 8b). pacman places it on
-upgrade and Zen reads it on next start; no migration, installer, or `sudo` write. The file
-is authored here as `default/firefox/policies-zen.json`, beside the XPI it force-installs, so
-`install_url` and the pin test stay in one place; the `omarchy-settings` PKGBUILD sources it
-from there (the same out-of-repo PKGBUILD seam the icon and XPI already use).
+`omarchy-settings` ships this file package-owned via the repo's `etc/** -> /etc/**` mapping
+(`docs/file-layout.md`), the same mechanism behind `/etc/docker/daemon.json` (Decision 8b).
+The repo path mirrors the install path, so authoring `etc/zen/policies/policies.json` is the
+whole change: pacman places it on upgrade, Zen reads it next start, and no migration,
+installer, or `sudo` write is involved. Confirm at implementation that `etc/**` is packaged by
+a glob so the new file is picked up automatically; add an explicit PKGBUILD line only if it is
+not. The file must NOT be listed in the package's `backup=` array (unlike the other 26 `/etc`
+drop-ins): `ExtensionSettings` has to track the package, so the shipped version must win on
+every upgrade. The cost is that a user's hand-edits to this file are overwritten on the next
+`omarchy-settings` upgrade, not preserved as `.pacnew` -- acceptable, since Zen reads a single
+policy file with no `.d` merge, so Omarchy owns Zen's whole policy surface regardless.
 
 ## Decisions
 
@@ -420,9 +427,9 @@ from there (the same out-of-repo PKGBUILD seam the icon and XPI already use).
    - Options:
      - (a) The migration and installer write `/etc/zen/policies/policies.json` with
        `sudo install -D` (the earlier plan).
-     - (b) Ship the file from the `omarchy-settings` package, which already owns `/etc`
-       drop-ins like `/etc/docker/daemon.json` and `/etc/modprobe.d/` (this repo ships no
-       `/etc` files; the package is a separate PKGBUILD).
+     - (b) Ship the file from the `omarchy-settings` package via the repo's
+       `etc/** -> /etc/**` mapping, the same path as `/etc/docker/daemon.json` and the other
+       32 `/etc` drop-ins this repo already carries.
    - What (b) removes: the migration's Zen step, the installer write, the
      `omarchy-remove-browser` cleanup, the fake-`sudo` test, A7's sudo accounting, and the
      non-wheel-user failure mode. pacman drops the file on `omarchy-settings` upgrade, Zen
@@ -436,17 +443,24 @@ from there (the same out-of-repo PKGBUILD seam the icon and XPI already use).
      package` rather than replacing it. Contrast (a): `sudo install`/`cp -f` overwrites a
      hand-rolled policy silently, so (b) is the safer of the two here. Caveat common to both:
      `/etc/zen/policies/policies.json` is a single file (Gecko has no `.d` merge for
-     policies), so Omarchy owns Zen's whole policy surface either way -- a user wanting their
-     own Zen policy must merge into ours.
-   - What (b) costs: a 1KB inert file on non-Zen boxes, the out-of-repo PKGBUILD dependency
-     the icon and XPI already have, and pre-cleaning any unowned `/etc/zen/policies/policies.json`
-     before the upgrade (the Phase 0 residue on the dev box; general users hit this only if
-     they hand-placed a policy). An empty `/etc/zen` dir does not block pacman -- only an
-     unowned file at the target path does.
+     policies), so Omarchy owns Zen's whole policy surface either way. The file is not a pacman
+     `backup=` file (`ExtensionSettings` must track the package, so the shipped version wins on
+     upgrade), so a user's hand-edits to it are overwritten on the next `omarchy-settings`
+     upgrade, not preserved as `.pacnew`.
+   - What (b) costs: a 1KB inert file on non-Zen boxes, and pre-cleaning any unowned
+     `/etc/zen/policies/policies.json` before the upgrade (the Phase 0 residue on the dev box;
+     general users hit this only if they hand-placed a policy). An empty `/etc/zen` dir does
+     not block pacman -- only an unowned file at the target path does. Do not paper over that
+     block by adding `/etc/zen/*` to `bin/omarchy-update-system-pkgs`'s `--overwrite` (scoped
+     to `/usr/share/omarchy/*` today); the refusal is the never-clobber behavior we want.
+     Blast radius: `omarchy` pins `omarchy-settings=<version>`, so a halted `omarchy-settings`
+     upgrade blocks the whole Omarchy update with a raw pacman error until the unowned file is
+     cleared.
    - Decided: (b). Phase 3 shrinks to the XPI, the policy file, the pin test, and the
      hand-checks; the migration, installer, and `omarchy-remove-browser` Zen steps and their
-     tests drop. The policy is authored at `default/firefox/policies-zen.json` and packaged
-     into `omarchy-settings` as `/etc/zen/policies/policies.json`.
+     tests drop. The policy is authored at `etc/zen/policies/policies.json` (repo path mirrors
+     the install path) and reaches `/etc/zen/policies/policies.json` through the `etc/**`
+     mapping.
 
 ## Plan
 
@@ -567,35 +581,35 @@ Tests:
 
 Files:
 
-- `default/firefox/policies-zen.json` (authored here; the `omarchy-settings` package ships
-  it to `/etc/zen/policies/policies.json` as a package-owned file, Decision 8b).
-- `default/firefox/teams-join.xpi` (shipped by the `omarchy` package to
-  `/usr/share/omarchy/default/firefox/`, which the policy's `install_url` points at).
-- `omarchy-settings` PKGBUILD: add the policy file to its packaged `/etc` drop-ins (the
-  out-of-repo seam the icon already uses). No `omarchy-install-browser` or
-  `omarchy-remove-browser` change: pacman owns the file, so it lands on upgrade and is
-  removed when the package stops shipping it. A pre-existing unowned
+- `etc/zen/policies/policies.json` (authored here; `omarchy-settings` ships it to
+  `/etc/zen/policies/policies.json` through the `etc/**` mapping, Decision 8b).
+- `default/firefox/teams-join.xpi` (shipped by `omarchy-settings` via `default/**` to
+  `/usr/share/omarchy/default/firefox/`, which the policy's `install_url` points at -- same
+  package as the policy).
+- No `omarchy-install-browser`, `omarchy-remove-browser`, or PKGBUILD change if `etc/**` is
+  already packaged by a glob (verify; add one PKGBUILD line only if it is an explicit list).
+  pacman owns the file, so it lands on upgrade and is removed when the package stops shipping
+  it. Do not add it to the package's `backup=` array (Decision 8b). A pre-existing unowned
   `/etc/zen/policies/policies.json` (Phase 0 residue, or a hand-rolled policy) blocks the
   upgrade until cleared, rather than being overwritten (Decision 8).
 - `test/shell.d/firefox-teams-join-test.sh`
-- `docs/file-layout.md`: a `default/firefox/policies-zen.json` row noting `omarchy-settings`
-  ships it to `/etc/zen/policies/policies.json`.
+- No `docs/file-layout.md` row: the existing `etc/** -> /etc/**` row already covers it.
 
 Tests in `firefox-teams-join-test.sh`:
 
-- Policy and XPI test (python3, zipfile + json), reading `default/firefox/policies-zen.json`
+- Policy and XPI test (python3, zipfile + json), reading `etc/zen/policies/policies.json`
   and the XPI directly (no migration or installer to exercise under (b)):
   - The `ExtensionSettings` key equals `gecko.id`, and its `installation_mode` is exactly
     `force_installed` (not `normal_installed`, missing, or hyphenated, any of which would
     silently not force-install).
   - `install_url` equals `file:///usr/share/omarchy/default/firefox/teams-join.xpi` exactly
     (not only contains `teams-join.xpi`).
-  - `policies-zen.json`'s `Preferences` is a superset of `policies.json`'s `Preferences`,
-    adding exactly `xpinstall.signatures.required` = `{Value: false, Status: default}` (a
-    Firefox preference, set inside `Preferences`, not a top-level policy key).
+  - The Zen policy's `Preferences` is a superset of `default/firefox/policies.json`'s
+    `Preferences`, adding exactly `xpinstall.signatures.required` = `{Value: false, Status:
+    default}` (a Firefox preference, set inside `Preferences`, not a top-level policy key).
   - The only top-level `policies` keys beyond `Preferences` are `ExtensionSettings`,
     `DisableAppUpdate`, and `DefaultSerialGuardSetting`.
-  - `policies.json` has no `ExtensionSettings`.
+  - `default/firefox/policies.json` (the Firefox policy) has no `ExtensionSettings`.
   - The XPI member names equal the source file names as a set, and each member's bytes
     match.
   - Version bump, so an edit cannot ship without the version bump Zen needs to reinstall.
@@ -611,6 +625,15 @@ Tests in `firefox-teams-join-test.sh`:
     passes.
 
 Hand-checks, A1–A5 on this machine:
+
+The Zen checks (2, 7, 10, 11) need the real files on the box: the `force_installed` policy at
+`/etc/zen/policies/policies.json` and the XPI at the fixed `install_url`. `omarchy dev link`
+does not cover `/etc` or the fixed `default/**` install path, so build and install the package
+from the worktree with `omarchy dev pkg-test omarchy-settings <worktree>` (needs the
+`omarchy-pkgs` PKGBUILD checkout) -- this is also the only real test of the packaging seam.
+Assert with `pacman -Qo /etc/zen/policies/policies.json`. Hand-placing the two files with
+`sudo install -D` instead leaves both unowned, and both then block the next
+`omarchy-settings` upgrade until removed.
 
 1. Pre-clean, so Phase 0 residue does not mask the shipped mechanism. Remove any
    `x-scheme-handler/msteams` pin from `~/.config/mimeapps.list` and any leftover `/etc/zen`.
@@ -699,3 +722,4 @@ superseded `webNavigation` design; those clearances do not carry to this design.
 | spec+plan | grok-review | 3 | 9 (0 P1, 6 P2, 3 P3) | 9; cap reached |
 | spec+plan | fable-review (for Sol) | 1 | 11 (1 blocker, 5 should-fix, 5 nit) | 10; nit "de-dup loop-guard rationale" surfaced to John |
 | spec+plan | fable-review (for Sol) | 2 | 11 (0 blocker, 6 should-fix, 5 nit) | 11; Decision 8 (package-owned /etc) open for John |
+| plan (Decision 8b) | fable-review (for Sol) | 1 (delta) | 6 (0 blocker, 6 should-fix) | 6; caught that both XPI and /etc ship from omarchy-settings, not omarchy -- authoring moved to etc/zen/policies/policies.json, backup= and blast-radius noted |
