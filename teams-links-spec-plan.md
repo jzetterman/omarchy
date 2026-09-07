@@ -55,8 +55,8 @@ plain Teams web app. This work does not depend on it and does not change it.
    the handler checks for `teams-for-linux` at run time. The one-shot migration is never the
    sole path, since
    `--first-install` stamps it done.
-5. A non-meeting `msteams:` URL (chat, team, `/meet/<id>` deep links, which Teams web and
-   Outlook emit) reaches `teams-for-linux` unchanged when the pacman/AUR package is
+5. A non-meeting `msteams:` URL (chat, team, and other non-join deep links, which Teams web
+   and Outlook emit) reaches `teams-for-linux` unchanged when the pacman/AUR package is
    installed (the one on `PATH`). Nothing that works with the native client today stops
    working. Without it, A5.2 applies. A Flatpak or AppImage Teams client that exports its
    own `x-scheme-handler/msteams` is out of scope (see Non-goals): our user-level `.desktop`
@@ -140,7 +140,8 @@ plain Teams web app. This work does not depend on it and does not change it.
   `window.stop()` so the tab does not forward into the web join UI; Phase 1 Step 0 decides
   whether to keep it. Either way the script never navigates the tab to another page or
   closes it.
-- Personal-account `teams.live.com/meet/<id>` links (a different shape, no demand yet).
+- (Formerly a non-goal: `/meet/<id>` short links and `teams.live.com/meet`. These are now
+  IN scope -- see the "Extension: every meeting format, every cloud" section below.)
 - Shipping Chromium support first and Zen later. Zen is the default browser here.
 - Pinning `x-scheme-handler/msteams` in `default/applications/mimeapps.list`.
 - A Flatpak or AppImage `teams-for-linux` (only the pacman/AUR package is detected). Its own
@@ -461,6 +462,203 @@ policy file with no `.d` merge, so Omarchy owns Zen's whole policy surface regar
      tests drop. The policy is authored at `etc/zen/policies/policies.json` (repo path mirrors
      the install path) and reaches `/etc/zen/policies/policies.json` through the `etc/**`
      mapping.
+
+## Extension: every meeting format, every cloud
+
+Added 2026-09-07 after a real `/meet/<id>?p=<passcode>` link did not fire under the design
+above. Source: `teams-url-formats-research.md` (live-verified 2026-09-07 against Microsoft's
+launcher JS, MS Learn, and teams-for-linux v2.20.0). This section amends the Requirements,
+Acceptance criteria, Non-goals, Constraints, Security, and Decisions above. It states WHAT
+changes. The Plan owns HOW.
+
+### Problem
+
+The design above recognises one meeting shape (`/l/meetup-join/19(:|%3a)...@thread.v2`) on
+three commercial hosts, and rebuilds every match to `msteams://teams.microsoft.com/...`.
+Three facts break that:
+
+1. Microsoft's default meeting link is now the short form `/meet/<meetingId>?p=<passcode>`.
+   Meet-now has used it since Feb 2025. Scheduled meetings since Jan 2026 (commercial and
+   GCC) and Feb 2026 (GCC High and DoD). New invites will carry this shape, not the classic
+   one. A user's real `/meet/` link opened in a browser tab and stayed there.
+2. Teams runs in more than one cloud. GCC High lives on `gov.teams.microsoft.us`, DoD on
+   `dod.teams.microsoft.us` (thread ids `19:dod:meeting_...`), consumer on `teams.live.com`.
+   Those hosts never inject the script today, and a gov meeting forced onto
+   `teams.microsoft.com` is the wrong cloud.
+3. The launcher intermediary `/dl/launcher/launcher.html?url=<encoded /_#/deeplink>` carries
+   either shape inside `url=`. Design 1 handles it for the classic shape only.
+
+A meeting link must open in the client whatever its shape and whatever its cloud.
+
+### Requirements (continues the list above)
+
+7. **Two meeting shapes.** The extension and the handler recognise both:
+   - Classic: `l/meetup-join/<threadId>/0`, with optional `?context=<json>`. `<threadId>` is
+     `19:meeting_<id>@thread.v2` or `19:dod:meeting_<id>@thread.v2`. `:` and `@` may arrive
+     as `%3a` and `%40`.
+   - Short: `meet/<meetingId>`, with optional `?p=<passcode>`. `<meetingId>` is any run of
+     characters that is not `/`, `?`, `#`, or whitespace. It is NOT digits-only: Microsoft's
+     own tests accept `meet/user@example.com`. `p` may be absent (consumer links).
+8. **Five hosts, one best-effort.** Both shapes are recognised on `teams.microsoft.com`,
+   `teams.cloud.microsoft`, `teams.live.com`, `gov.teams.microsoft.us`, and
+   `dod.teams.microsoft.us`. `teams.microsoftonline.cn` (21Vianet) is included best-effort
+   and flagged unverified (Decision 12). Bare `teams.microsoft.us` is not a web host and is
+   not matched.
+9. **Launcher intermediary.** On `/dl/launcher/launcher.html`, the meeting is taken from the
+   `url=` parameter after one decode and after stripping the leading `/_#`. The script fires
+   once on the extracted meeting, not on the launcher URL itself. `type=meet` and
+   `type=meetup-join` are the only launcher types that are meetings.
+10. **Preserve the cloud.** The host the user clicked is the host that reaches the client and
+    the web-app fallback. Nothing rewrites a gov, DoD, consumer, or `cloud.microsoft` host to
+    `teams.microsoft.com`. The web-app fallback opens `https://<original-host>/<path>`.
+11. **Query handling.** Keep the meeting's own `p=` and `context=`. Drop the launcher's added
+    parameters wherever they sit: `anon`, `deeplinkId`, `launchAgent`, `suppressPrompt`,
+    `type`, `directDl`, `msLaunch`, `enableMobilePage`, `fqdn`, and `enablemcas`. The host
+    itself carries the cloud, so `fqdn` is not needed in the emitted URL.
+12. **Both shapes reach both targets.** With `teams-for-linux` installed, both shapes reach it
+    unchanged (Decision 4 stands, subject to Decision 11). Without it, both shapes open a
+    web-app window on the original host with the `omarchyWebapp=1` marker, under the same
+    throttle.
+
+Edits to existing text this implies (the Plan applies them):
+
+- Requirement 1: the shape and host list become "either shape in Requirement 7 on any host
+  in Requirement 8".
+- Requirement 5: `/meet/<id>` removed from the non-meeting examples. It is a meeting now.
+- A5.1: "a recognised meeting URL" means either shape on any listed host.
+- A8: replace "the three Teams hosts" with the Requirement 8 host set, and replace "the page
+  host is dropped" with "the page host is kept". A8 also covers the `/meet/` shape.
+- Constraints and Security: every "three Teams hosts" becomes the Requirement 8 host set.
+- Design 1 and Design 2 notes that say the script "always rebuilds to `teams.microsoft.com`"
+  are superseded by Requirement 10.
+
+### Non-goals (updated)
+
+The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is removed; both
+`/meet/` and `teams.live.com/meet` are in scope now (Requirements 7 and 8). Add:
+
+- Firing on web-client destinations. `/v2/?meetingjoin=true#/...` and
+  `/light-meetings/launch` are where Microsoft sends a Linux browser. The script does not
+  fire on them; firing there is the loop the guards exist to stop. (A `/l/meetup-join/...`
+  found inside a `/v2/` fragment is a different case: the launcher hop carries it there, and
+  Design 1 already catches it under the per-meeting latch.)
+- Town hall and broadcast attendee pages, `/convene/meetings?url=...`. Microsoft routes them
+  to the web. They stay web (Decision 10).
+- The scheduling dialog `/l/meeting/new`. It creates a meeting; it is not a join.
+- Non-meeting deep links under `/l/`: `chat`, `call`, `channel`, `team`, `message`,
+  `entity`, `app`, `task`, `file`, `meeting-share`. Requirement 5 still forwards them to
+  `teams-for-linux` when a client emits them as `msteams:`; the browser extension never
+  turns their `https://` form into `msteams:`.
+- Safe Links wrappers (`<region>.safelinks.protection.outlook.com/?url=...`). The browser
+  follows the redirect and lands on the real Teams host, where the script runs. No handling.
+- The `ms-teams:` scheme. The launcher uses it only for consumer links on a Windows user
+  agent. Linux never sees it. `teams-for-linux` does not register it either.
+- Verifying the 21Vianet cloud. It is unreachable from the US. Its host is matched
+  best-effort; its link shapes are not confirmed (Decision 12).
+- Fixing `teams-for-linux`'s own cloud routing. A GCC High or DoD user must point
+  `teams-for-linux` at their cloud in its own config. Our URL cannot do that for them
+  (Decision 9).
+
+### Acceptance criteria (continues A1-A8)
+
+- A9. A `/meet/<id>?p=<passcode>` link on each of the five hosts in Requirement 8 opens the
+  meeting in `teams-for-linux` when installed, else in a web-app window. The `p=` value
+  arrives unchanged at whichever target opens. One fire per meeting per tab, per A8.
+- A10. A classic link on `gov.teams.microsoft.us` or `dod.teams.microsoft.us`, including a
+  `19:dod:meeting_...` thread id, fires. The emitted `msteams:` URL and the web-app fallback
+  both stay on the clicked host. Nothing in the chain substitutes `teams.microsoft.com`.
+- A11. For every host in Requirement 8, the web-app fallback opens
+  `https://<original-host>/<path>` plus the `omarchyWebapp=1` marker, for both shapes. The
+  handler accepts an `msteams:` URL that names any listed host. A host outside the list still
+  lands on the Teams home page (the look-alike rule in Security holds).
+- A12. None of these fire: `/v2/?meetingjoin=true#/...` (except the latched launcher hop A8
+  already covers), `/light-meetings/launch`, `/convene/meetings`, `/l/meeting/new`, and every
+  non-meeting `/l/<type>/` in the Non-goals list. Tested on at least one commercial host and
+  one gov host.
+- A13. A launcher intermediary URL (`/dl/launcher/launcher.html?url=...&type=meet` and
+  `...&type=meetup-join`) fires exactly once, on the meeting extracted from `url=`, with the
+  launcher parameters in Requirement 11 dropped and `p=` or `context=` kept. A launcher URL
+  whose `type` is not `meet` or `meetup-join` does not fire.
+- A14. The loop guard holds for the new shapes and hosts. The `omarchyWebapp` marker, the
+  standalone guard, the per-meeting latch, and the ~20s throttle each treat a `/meet/`
+  meeting the way they treat a classic one. A `/meet/` id and a classic thread id for the
+  same meeting are different keys; unifying them is not required. Two encodings of one classic
+  id still map to one key on every host.
+- A15. `./test/all` covers each host in Requirement 8 for both shapes, each Non-goal shape as
+  a negative, and the launcher intermediary for both types. The manifest test asserts the
+  `content_scripts.matches` and `host_permissions` sets equal the Requirement 8 host set
+  exactly, still `https://` only, still no `<all_urls>`.
+
+### Decisions (continues 1-8)
+
+9. **Preserve the original cloud (Requirement 10). Recommended: yes. Open for John.**
+   - The clicked host reaches the client and the fallback unchanged. A DoD meeting never
+     becomes a `teams.microsoft.com` URL.
+   - Documented limitation, not a blocker: `teams-for-linux` v2.20.0 recognises only the three
+     commercial hosts in its `msteams://<host>/` matching, and its host-less form loads the
+     path against its own configured `config.url` (default `teams.cloud.microsoft`). So a GCC
+     High or DoD user must set `teams-for-linux`'s URL (and, for the host form, its
+     `msTeamsProtocols`) to their cloud in ITS config. Our rewrite cannot fix that from the
+     URL. Preserving the host costs nothing on the commercial path and makes the gov path
+     correct once the user's own client is configured; forcing commercial would make it wrong
+     on every path.
+   - A5.2's home fallback (no `teams-for-linux`, unrecognised `msteams:` input) stays
+     `https://teams.microsoft.com/`. A host-less non-meeting URL carries no cloud to preserve.
+     Accepted.
+10. **Town hall and broadcast `/convene/` links stay web. Recommended: do not fire. Open for
+    John.** Microsoft itself routes attendees to a web page for these. Whether the client
+    should ever open them is unconfirmed. Firing a scheme on a page Microsoft treats as web
+    risks a client that lands on nothing. Revisit only on a real report.
+11. **Emitted form, v1 vs v2. OPEN. Settle in the Plan, not here.** Two forms exist:
+    - v1, host-less: `msteams:/<path>`. This is what Microsoft's own launcher emits.
+      `teams-for-linux` accepts it in every cloud by loading `config.url + path`, so a
+      correctly configured gov client works. But the URL carries no host, so our web-app
+      fallback cannot preserve the cloud from the URL alone.
+    - v2, with host: `msteams://<host>/<path>`. Our fallback preserves the cloud. But
+      `teams-for-linux` v2.20.0 matches only the three commercial hosts in this form and
+      rejects a gov or DoD host outright.
+    - The Plan must pick one form, or a handler-side translation, that meets A9, A10, and A11
+      together and states what a gov user with a correctly configured `teams-for-linux` gets.
+      It must also say whether Decision 4 (forward unchanged) survives. Any option must keep
+      the passcode and cloud handling in the Security notes below.
+12. **21Vianet host, best-effort. Recommended: include in the host set, flag unverified, no
+    acceptance criterion. Open for John.** Cost: one more host pattern in the manifest and
+    handler, and one more possible "open msteams?" prompt. Risk: none new, since the script
+    fires only on the two meeting shapes. If the cloud's link shapes differ, the script does
+    nothing there, which is today's behaviour. The alternative is to leave it out until a user
+    asks. Either is fine; include is the smaller later change.
+
+### Constraints and Security notes (deltas)
+
+- **Wider host set.** `content_scripts.matches` and `host_permissions` grow from three hosts
+  to the Requirement 8 set (five, six with 21Vianet). Still exact `https://` hosts, still no
+  `<all_urls>`, still no `tabs`, `webNavigation`, or background. The handler's host allow-list
+  grows to the same set and still rejects anything else, so a look-alike host still becomes
+  the home page, never a meeting window.
+- **More one-time prompts.** The browser's "always allow" is keyed per origin. A user who
+  meets links on several clouds sees the prompt once per host they hit, up to the size of the
+  host set. Same behaviour as today, larger bound. Not ours to suppress.
+- **The `p=` passcode in the URL.** `p=` is the hashed meeting passcode Microsoft puts in the
+  shareable link. Anyone holding the link already holds it, and it already travels through the
+  browser's history and the launcher URL. Carrying it into `msteams:` and the fallback URL
+  adds no new exposure. Two rules keep it that way:
+  - The handler's throttle stamp stores the meeting id only, never the query. `p=` must not
+    land in `~/.local/state`.
+  - The per-meeting `sessionStorage` latch keys on the path with the query stripped, as
+    Design 1 does today. `p=` must not land in the latch key.
+- **Short-shape id is bounded.** `<meetingId>` excludes `/`, `?`, `#`, and whitespace, so the
+  handler's tail guard still rejects whitespace and the value stays one quoted argv element no
+  shell re-parses. `@` in a meeting id (the `user@example.com` case) is allowed and carries no
+  shell meaning.
+- **Native path unchanged.** Every `msteams:` URL still goes to `teams-for-linux` unchanged
+  when installed (Decision 4, subject to Decision 11). Its own `msTeamsProtocols` allow-list
+  bounds the value there, as before.
+
+### Review log (extension gate)
+
+| Gate | Stage | Round | Findings | Integrated |
+|------|-------|-------|----------|------------|
+
 
 ## Plan
 
