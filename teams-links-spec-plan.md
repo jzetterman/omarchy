@@ -561,16 +561,19 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 
 ### Acceptance criteria (continues A1-A8)
 
-- A9. A `/meet/<id>?p=<passcode>` link on each of the five hosts in Requirement 8 opens the
-  meeting in `teams-for-linux` when installed, else in a web-app window. The `p=` value
-  arrives unchanged at whichever target opens. One fire per meeting per tab, per A8.
+- A9. A `/meet/<id>` link on each of the five verified hosts in Requirement 8 opens the
+  meeting in `teams-for-linux` when installed, else in a web-app window, whether or not it
+  carries `?p=<passcode>` (consumer Meet-now links omit it). When `p=` is present it arrives
+  unchanged at whichever target opens; when absent, none is synthesized. One fire per meeting
+  per tab, per A8.
 - A10. A classic link on `gov.teams.microsoft.us` or `dod.teams.microsoft.us`, including a
   `19:dod:meeting_...` thread id, fires. The emitted `msteams:` URL and the web-app fallback
   both stay on the clicked host. Nothing in the chain substitutes `teams.microsoft.com`.
-- A11. For every host in Requirement 8, the web-app fallback opens
+- A11. For each of the five verified hosts in Requirement 8, the web-app fallback opens
   `https://<original-host>/<path>` plus the `omarchyWebapp=1` marker, for both shapes. The
-  handler accepts an `msteams:` URL that names any listed host. A host outside the list still
-  lands on the Teams home page (the look-alike rule in Security holds).
+  handler accepts an `msteams:` URL that names any listed host (21Vianet included, as
+  membership). A host outside the list still lands on the Teams home page (the look-alike rule
+  in Security holds).
 - A12. None of these fire: `/v2/?meetingjoin=true#/...` (except the latched launcher hop A8
   already covers), `/light-meetings/launch`, `/convene/meetings`, `/l/meeting/new`, and every
   non-meeting `/l/<type>/` in the Non-goals list. Tested on at least one commercial host and
@@ -582,12 +585,14 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 - A14. The loop guard holds for the new shapes and hosts. The `omarchyWebapp` marker, the
   standalone guard, the per-meeting latch, and the ~20s throttle each treat a `/meet/`
   meeting the way they treat a classic one. A `/meet/` id and a classic thread id for the
-  same meeting are different keys; unifying them is not required. Two encodings of one classic
-  id still map to one key on every host.
-- A15. `./test/all` covers each host in Requirement 8 for both shapes, each Non-goal shape as
-  a negative, and the launcher intermediary for both types. The manifest test asserts the
-  `content_scripts.matches` and `host_permissions` sets equal the Requirement 8 host set
-  exactly, still `https://` only, still no `<all_urls>`.
+  same meeting are different keys; unifying them is not required. Two encodings of one id --
+  classic or short (a `/meet/` id can contain `@`, folded from `%40`) -- still map to one key
+  on every host.
+- A15. `./test/all` covers each of the five verified hosts for both shapes, the A12 negative
+  shapes plus A13's non-`meet`/`meetup-join` launcher case, and the launcher intermediary for
+  both meeting types. The manifest test asserts the `content_scripts.matches` and
+  `host_permissions` sets equal the Requirement 8 host set exactly (21Vianet included, since
+  that is host membership), still `https://` only, still no `<all_urls>`.
 
 ### Decisions (continues 1-8)
 
@@ -609,18 +614,17 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
     John.** Microsoft itself routes attendees to a web page for these. Whether the client
     should ever open them is unconfirmed. Firing a scheme on a page Microsoft treats as web
     risks a client that lands on nothing. Revisit only on a real report.
-11. **Emitted form, v1 vs v2. OPEN. Settle in the Plan, not here.** Two forms exist:
-    - v1, host-less: `msteams:/<path>`. This is what Microsoft's own launcher emits.
-      `teams-for-linux` accepts it in every cloud by loading `config.url + path`, so a
-      correctly configured gov client works. But the URL carries no host, so our web-app
-      fallback cannot preserve the cloud from the URL alone.
-    - v2, with host: `msteams://<host>/<path>`. Our fallback preserves the cloud. But
-      `teams-for-linux` v2.20.0 matches only the three commercial hosts in this form and
-      rejects a gov or DoD host outright.
-    - The Plan must pick one form, or a handler-side translation, that meets A9, A10, and A11
-      together and states what a gov user with a correctly configured `teams-for-linux` gets.
-      It must also say whether Decision 4 (forward unchanged) survives. Any option must keep
-      the passcode and cloud handling in the Security notes below.
+11. **Emitted form is v2 (host-preserving); native-path translation is OPEN for the Plan.**
+    The content script emits `msteams://<host>/<path>`: A10 requires the clicked host in the
+    emitted URL and Requirement 11 drops `fqdn`, so pure host-less v1 (`msteams:/<path>`) is
+    not an option -- it carries no cloud for the fallback to preserve. What the Plan settles is
+    the NATIVE path: does the handler forward the v2 URL to `teams-for-linux` unchanged
+    (Decision 4 -- works for the three commercial hosts its v2.20.0 regex matches; a gov/DoD
+    host is rejected there), or translate to the host-less `msteams:/<path>` that
+    `teams-for-linux` accepts in any cloud by loading `config.url + path`? The Plan must pick
+    one, state what a gov user with a correctly-configured `teams-for-linux` gets, and say
+    whether Decision 4 survives. The web-app fallback uses the preserved host either way. Any
+    option keeps the passcode and cloud handling in the Security notes below.
 12. **21Vianet host, best-effort. Recommended: include in the host set, flag unverified, no
     acceptance criterion. Open for John.** Cost: one more host pattern in the manifest and
     handler, and one more possible "open msteams?" prompt. Risk: none new, since the script
@@ -658,6 +662,7 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 
 | Gate | Stage | Round | Findings | Integrated |
 |------|-------|-------|----------|------------|
+| spec addition | grok-review | 1 | 5 (0 P1, 3 P2, 2 P3) | 5; Decision 11 reframed (A10+Req11 already rule out host-less v1 -> emit v2, native-path translation open); A11/A15 narrowed to 5 verified hosts (21Vianet membership only); A9 covers no-passcode /meet/; A14 folds /meet/ id encoding; A15 negatives point at A12/A13 |
 
 
 ## Plan
