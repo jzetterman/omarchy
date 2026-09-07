@@ -483,8 +483,8 @@ Three facts break that:
    one. A user's real `/meet/` link opened in a browser tab and stayed there.
 2. Teams runs in more than one cloud. GCC High lives on `gov.teams.microsoft.us`, DoD on
    `dod.teams.microsoft.us` (thread ids `19:dod:meeting_...`), consumer on `teams.live.com`.
-   Those hosts never inject the script today, and a gov meeting forced onto
-   `teams.microsoft.com` is the wrong cloud.
+   The gov and DoD hosts never inject the script today (`teams.live.com` already does), and a
+   gov meeting forced onto `teams.microsoft.com` is the wrong cloud.
 3. The launcher intermediary `/dl/launcher/launcher.html?url=<encoded /_#/deeplink>` carries
    either shape inside `url=`. Design 1 handles it for the classic shape only.
 
@@ -513,16 +513,17 @@ A meeting link must open in the client whatever its shape and whatever its cloud
     never rewrites a gov, DoD, consumer, or `cloud.microsoft` host to `teams.microsoft.com`.
     What `teams-for-linux` then does with a gov/DoD host is its own concern (Decision 9): the
     guarantee covers what Omarchy emits and what the fallback opens, not the client's routing.
-11. **Query handling -- settled contract, Design 1 mechanism.** The observable contract is
-    fixed: the emitted URL keeps the meeting's own `p=` and `context=` and drops every other
-    (launcher-added) query parameter. Tests assert exactly that kept set. The launcher adds
-    `anon`, `deeplinkId`, `launchAgent`, `suppressPrompt` (research-confirmed) plus routing keys
-    (`type`, `directDl`, `msLaunch`, `enableMobilePage`, `fqdn`), and `enablemcas` is already
-    dropped in Design 1 -- all fall away because they are not `p=` or `context=`. HOW the Plan
-    drops them is open (extending Design 1's existing named-drop-list to the launcher routing
-    keys yields this exact kept set, staying consistent with the classic path); the kept set
-    does not change. The host carries the cloud, so `fqdn` is dropped and not needed in the
-    emitted URL.
+11. **Query handling -- allow-list contract.** The emitted URL keeps ONLY the meeting's own
+    `p=` and `context=`; every other query parameter is dropped, so an unknown future launcher
+    key is dropped by default. This exact kept-set is the contract, and the tests include an
+    unknown-key case (A15). It matches Design 1's observed output on real inputs: a classic
+    launcher URL carries only `context=` once the launcher's `anon`, `deeplinkId`, `launchAgent`,
+    `enablemcas`, `suppressPrompt` and routing keys (`type`, `directDl`, `msLaunch`,
+    `enableMobilePage`, `fqdn`) are gone. The Plan must achieve "only `p=` and `context=`
+    survive" -- an allow-list filter is the direct way; extending Design 1's drop-list qualifies
+    only if it provably covers every key the launcher can add. (This resolves the earlier
+    blacklist framing: because the contract is exact, allow-list semantics are required.) The
+    host carries the cloud, so `fqdn` is dropped and not needed in the emitted URL.
 12. **Both shapes reach both targets.** With `teams-for-linux` installed, both shapes reach it
     unchanged (Decision 4 stands, subject to Decision 11). Without it, both shapes open a
     web-app window on the original host with the `omarchyWebapp=1` marker, under the same
@@ -616,9 +617,15 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   short matcher fails. A `/meet/` case
   with `p=` asserts the passcode arrives unchanged and never lands in the throttle stamp or the
   latch key; a `/meet/` case without `p=` asserts it still fires and none is synthesized (the
-  A9 and Security rules). The manifest test asserts the `content_scripts.matches` and
-  `host_permissions` sets equal the Requirement 8 host set exactly (21Vianet included, since
-  that is host membership), still `https://` only, still no `<all_urls>`.
+  A9 and Security rules). An unknown extra query key (not `p=`/`context=`) is dropped from the
+  emitted URL (Requirement 11 allow-list). The `/convene/` and wrong-`type`-launcher negatives
+  each carry a VALID embedded `/meet/` or `/l/meetup-join/` payload in `url=`, so the test
+  proves the exclusion holds even when a real meeting is present (the extractor must skip
+  `/convene/` and honour the launcher `type` gate). A meeting whose `/meet/` id or passcode
+  contains the literal `omarchyWebapp` token still fires (the marker-scoping rule in Security).
+  The manifest test asserts the `content_scripts.matches` and `host_permissions` sets equal the
+  Requirement 8 host set exactly (21Vianet included, since that is host membership), still
+  `https://` only, still no `<all_urls>`.
 
 ### Decisions (continues 1-8)
 
@@ -673,6 +680,13 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 - **More one-time prompts.** The browser's "always allow" is keyed per origin. A user who
   meets links on several clouds sees the prompt once per host they hit, up to the size of the
   host set. Same behaviour as today, larger bound. Not ours to suppress.
+- **Marker collision with arbitrary short ids.** Design 1's loop guard stands down when the
+  URL contains the bare `omarchyWebapp` token (bare because Microsoft encodes `=1` to `%3D1`
+  in the launcher `url=`). A `/meet/` id is arbitrary (Requirement 7), so a bare substring
+  match could false-stand-down on a meeting whose id or passcode contained that literal token.
+  The marker check must be scoped to match the marker only as its own query parameter
+  (`omarchyWebapp` as a `?`/`&`-delimited key, and its `%3D1`-encoded form inside the launcher
+  `url=`), never as a substring of the path, id, or passcode. A15 adds a collision case.
 - **The `p=` passcode in the URL.** `p=` is the hashed meeting passcode Microsoft puts in the
   shareable link. Anyone holding the link already holds it, and it already travels through the
   browser's history and the launcher URL. Carrying it into `msteams:` and the fallback URL
@@ -697,6 +711,7 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 | spec addition | grok-review | 2 | 3 (0 P1, 2 P2, 1 P3) | 3; scoped Req10/A9/A10 to what Omarchy emits + fallback, qualified native gov/DoD with Decision 9 (teams-for-linux can't do both host-preserve and gov/DoD open); A15 requires a non-numeric /meet/ id case; Req11 drop-list marked non-exhaustive, Plan pins vs launcher JS |
 | spec addition | grok-review | 3 (cap) | 6 (0 P1, 3 P2, 3 P3) | 6; extension-vs-settled-base consistency: /v2/ non-goal narrowed (a /v2/ fragment carrying a meeting still fires per A8, latch only blocks the repeat); A5.1/A11 keep the host-less v1 form Design 2 accepts; A15 pins the p= security rules; A10 "emitted"=content-script URL (Decision 11 owns native argv); Req11 = Design 1 blacklist not keep-only; Constraints "up to three" prompt bound in the edit list. Cap reached |
 | spec addition | codex-review (Sol, gpt-5.6-sol) | 1 | 4 (0 P1, 4 P2) | 4; A12 /v2/ negative narrowed to fragments with no meeting (matches A8); Decision 11 now per-host (global v1 would regress teams.live.com consumer + non-config.url clouds -- tfl v2 accepts commercial+consumer, rejects gov/DoD); A15 adds a gov/DoD launcher case asserting host preservation; Req11 settled the kept-set contract {p,context}, HOW open |
+| spec addition | codex-review (Sol) | 2 | 4 (0 P1, 3 P2, 1 P3) | 4; marker check must scope to the marker query param (a /meet/ id/passcode containing "omarchyWebapp" must still fire) + collision test; Req11 -> ALLOW-LIST (resolves grok-blacklist vs codex-exact-set: allow-list required for an exact testable contract) + unknown-key test; exclusion tests must embed a valid meeting in url= (bare /convene/ proves nothing); Problem: only gov/DoD newly non-injecting (teams.live.com already injects) |
 
 
 ## Plan
