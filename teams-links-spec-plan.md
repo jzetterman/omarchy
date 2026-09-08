@@ -1017,6 +1017,19 @@ not a design fork.)
    (expect `/_#/meet/<id>?p=...`), the `type` value, and every extra key the launcher adds. This
    pins the unknown-key fixture to real keys, and records whether `/meet/` commits as a page or
    302s to the launcher (both paths are covered either way).
+
+**Step 0 check 2 result (2026-09-08, John-captured HAR, throwaway meeting): PASS.** The `/meet/`
+link routed through `/dl/launcher/launcher.html` (a 200 document) as:
+`?url=<encoded>&type=meet&deeplinkId=<guid>&directDl=true&msLaunch=true&enableMobilePage=true`,
+with `url=` decoding to `/_#/meet/<id>?p=<pass>&anon=true`. So the launcher-added keys are `type`,
+`deeplinkId`, `directDl`, `msLaunch`, `enableMobilePage` (top level) and `anon` INSIDE `url=`
+(after `p=`); `fqdn`/`launchAgent` were absent in this capture (fqdn is ECS-flag-dependent per the
+research). The A15 unknown-key fixture uses exactly this key set. Verified end to end with the
+planned `content.js` logic: it reads `url=` on the launcher page, strips `/_#`, matches the short
+shape, allow-lists to keep only `p=`, and emits `msteams://teams.microsoft.com/meet/<id>?p=<pass>`
+-- `anon` dropped, `p=` kept, host preserved. This confirms the allow-list is load-bearing:
+`anon=true` (an anonymous-join flag) rides inside `url=` and must be dropped.
+
 #### `content.js`
 
 Six changes. Comments update with the code.
