@@ -15,12 +15,16 @@ HOSTS=(
   "https://teams.microsoft.com/*"
   "https://teams.cloud.microsoft/*"
   "https://teams.live.com/*"
+  "https://gov.teams.microsoft.us/*"
+  "https://dod.teams.microsoft.us/*"
+  "https://teams.microsoftonline.cn/*"
 )
 
 [[ -f $MANIFEST ]] || fail "teams-join manifest exists"
 
 jq -e --argjson hosts "$(printf '%s\n' "${HOSTS[@]}" | jq -R . | jq -s .)" '
   .manifest_version == 3
+  and .version == "0.2"
   and .content_scripts[0].matches == $hosts
   and .host_permissions == $hosts
   and .content_scripts[0].run_at == "document_start"
@@ -41,7 +45,7 @@ hosts_json=$(jq -c '.host_permissions' "$MANIFEST")
 echo "$hosts_json" | jq -e 'index("http://teams.microsoft.com/*") or index("<all_urls>")' >/dev/null &&
   fail "teams-join host_permissions are https hosts only, no http:// or <all_urls>" "$hosts_json"
 
-pass "teams-join manifest is MV3 content-script only for the three https hosts"
+pass "teams-join manifest is MV3 content-script only for the listed https hosts"
 
 load_line=$(grep '^--load-extension=' "$FLAGS" || true)
 [[ -n $load_line ]] || fail "chromium-flags.conf has a --load-extension= line"
@@ -121,18 +125,29 @@ const hosts = [
   'teams.microsoft.com',
   'teams.cloud.microsoft',
   'teams.live.com',
+  'gov.teams.microsoft.us',
+  'dod.teams.microsoft.us',
+  'teams.microsoftonline.cn',
 ]
 const context = 'context=%7B%22Tid%22%3A%22t%22%7D'
 const meetingColon = '/l/meetup-join/19:meeting_abc@thread.v2'
 const meetingEncoded = '/l/meetup-join/19%3ameeting_abc@thread.v2'
+const channelPath = '/l/meetup-join/19%3ax@thread.tacv2/1788865197722'
 const expectedColon = `msteams://teams.microsoft.com${meetingColon}`
 const expectedEncoded = `msteams://teams.microsoft.com${meetingEncoded}`
 const expectedWithContext = `msteams://teams.microsoft.com${meetingColon}?${context}`
 
 function assertFires(href, expected, description) {
   const { state } = runScript(href)
-  assertEqual(state.href, expected, `${description} rewrites to msteams://teams.microsoft.com`)
+  assertEqual(state.href, expected, `${description} rewrites to msteams://<page host>`)
   assertEqual(state.stopCalls, 1, `${description} calls window.stop after a fire`)
+}
+
+function assertNoFire(href, description) {
+  const { state, store } = runScript(href)
+  assertEqual(state.href, href, `${description} does not fire`)
+  assertEqual(state.stopCalls, 0, `${description} does not call window.stop`)
+  assertEqual(store.size, 0, `${description} does not latch`)
 }
 
 function launcherHref(pageHost, inner, extra = {}) {
@@ -145,24 +160,30 @@ function launcherHref(pageHost, inner, extra = {}) {
 }
 
 for (const host of hosts) {
+  const expectedColonHost = `msteams://${host}${meetingColon}`
+  const expectedEncodedHost = `msteams://${host}${meetingEncoded}`
+  const expectedWithContextHost = `msteams://${host}${meetingColon}?${context}`
+  const expectedShort = `msteams://${host}/meet/123?p=abc`
+  const expectedShortNoP = `msteams://${host}/meet/123`
+
   assertFires(
     `https://${host}${meetingColon}`,
-    expectedColon,
+    expectedColonHost,
     `${host} colon meeting path`
   )
   assertFires(
     `https://${host}${meetingEncoded}`,
-    expectedEncoded,
+    expectedEncodedHost,
     `${host} %3a meeting path`
   )
   assertFires(
     `https://${host}/v2/?meetingjoin=true#${meetingColon}?${context}`,
-    expectedWithContext,
+    expectedWithContextHost,
     `${host} v2 fragment`
   )
   assertFires(
     launcherHref(host, `${meetingColon}?${context}`),
-    expectedWithContext,
+    expectedWithContextHost,
     `${host} single-encoded context in url=`
   )
   assertFires(
@@ -170,8 +191,45 @@ for (const host of hosts) {
       host,
       `${meetingColon}?deeplinkId=abc-123&launchAgent=web&${context}&anon=true&enablemcas=1&suppressPrompt=true`
     ),
-    expectedWithContext,
+    expectedWithContextHost,
     `${host} deeplinkId= before context=`
+  )
+  assertFires(
+    `https://${host}/meet/123?p=abc`,
+    expectedShort,
+    `${host} /meet/123?p=abc direct`
+  )
+  assertFires(
+    `https://${host}/meet/123`,
+    expectedShortNoP,
+    `${host} /meet/123 without p=`
+  )
+  assertFires(
+    launcherHref(
+      host,
+      '/_#/meet/123?p=abc&anon=true',
+      {
+        type: 'meet',
+        deeplinkId: '11111111-1111-1111-1111-111111111111',
+        directDl: 'true',
+        msLaunch: 'true',
+        enableMobilePage: 'true',
+        launchAgent: 'join_launcher',
+        fqdn: host,
+      }
+    ),
+    expectedShort,
+    `${host} launcher /_#/meet/123 with Step 0 keys`
+  )
+  assertFires(
+    launcherHref(host, `/_#${meetingColon}?${context}&fqdn=${host}`),
+    expectedWithContextHost,
+    `${host} launcher /_#/l/meetup-join with context=`
+  )
+  assertFires(
+    `https://${host}/v2/?meetingjoin=true#/meet/123?p=abc`,
+    expectedShort,
+    `${host} v2 fragment carrying /meet/`
   )
 }
 
@@ -261,4 +319,229 @@ assertStandDownAndLatch(encodedMarkerHref, 'omarchyWebapp%3D1')
     'the store holds two distinct teamsjoin: keys'
   )
 }
+
+for (const host of ['teams.microsoft.com', 'gov.teams.microsoft.us']) {
+  assertFires(
+    `https://${host}${channelPath}?${context}`,
+    `msteams://${host}${channelPath}?${context}`,
+    `${host} channel meeting @thread.tacv2`
+  )
+}
+
+{
+  const href = `https://dod.teams.microsoft.us${meetingColon.replace('19:meeting_abc', '19:dod:meeting_abc')}/0?${context}`
+  const expected = `msteams://dod.teams.microsoft.us/l/meetup-join/19:dod:meeting_abc@thread.v2/0?${context}`
+  const { state } = runScript(href)
+  assertEqual(state.href, expected, 'DoD thread id rewrites to msteams://<page host>')
+  assert(
+    !state.href.includes('teams.microsoft.com'),
+    'DoD emit does not contain teams.microsoft.com',
+    state.href
+  )
+  assertEqual(state.stopCalls, 1, 'DoD thread id calls window.stop after a fire')
+}
+
+assertFires(
+  launcherHref('gov.teams.microsoft.us', '/_#/meet/123?p=abc'),
+  'msteams://gov.teams.microsoft.us/meet/123?p=abc',
+  'gov launcher /_#/meet/123 preserves host'
+)
+
+{
+  const href = 'https://teams.microsoft.com/meet/user@example.com?p=abc'
+  const { state, store } = runScript(href)
+  assertEqual(
+    state.href,
+    'msteams://teams.microsoft.com/meet/user@example.com?p=abc',
+    'non-numeric /meet/ id rewrites to msteams://<page host>'
+  )
+  assertEqual(state.stopCalls, 1, 'non-numeric /meet/ id calls window.stop after a fire')
+  assertDeepEqual(
+    [...store.keys()],
+    ['teamsjoin:/meet/user@example.com'],
+    'non-numeric /meet/ latch key strips the query'
+  )
+}
+
+{
+  const href = launcherHref('teams.microsoft.com', '/_#/meet/123?p=abc')
+  const { state, store } = runScript(href)
+  assertEqual(
+    state.href,
+    'msteams://teams.microsoft.com/meet/123?p=abc',
+    'launcher without type fires'
+  )
+  assertEqual(store.size, 1, 'launcher without type latches once')
+}
+
+assertFires(
+  launcherHref('teams.microsoft.com', '/_#/meet/123?p=abc', { type: 'chat' }),
+  'msteams://teams.microsoft.com/meet/123?p=abc',
+  'launcher with misleading type=chat on a valid meeting'
+)
+
+assertNoFire(
+  launcherHref('teams.microsoft.com', '/_#/l/chat/0/0?users=a', { type: 'meet' }),
+  'launcher with type=meet on a non-meeting payload'
+)
+
+{
+  const extra = 'futureKey=1&msLaunch=true&directDl=true&enableMobilePage=true&suppressPrompt=true&type=meet'
+  assertFires(
+    launcherHref('teams.microsoft.com', `/_#/meet/123?p=abc&${extra}`),
+    'msteams://teams.microsoft.com/meet/123?p=abc',
+    'unknown keys dropped from /meet/ launcher emit'
+  )
+  assertFires(
+    launcherHref('teams.microsoft.com', `/_#${meetingColon}?${context}&${extra}`),
+    expectedWithContext,
+    'unknown keys dropped from classic launcher emit'
+  )
+  assertFires(
+    'https://teams.microsoft.com/meet/123?futureKey=1&p=abc',
+    'msteams://teams.microsoft.com/meet/123?p=abc',
+    'allow-list keeps p= when it is not first'
+  )
+}
+
+{
+  const href = 'https://teams.microsoft.com/meet/123?p=abc'
+  const store = new Map()
+  const first = runScript(href, { store })
+  assertEqual(first.state.href, 'msteams://teams.microsoft.com/meet/123?p=abc', '/meet/123?p=abc fires')
+  assertDeepEqual([...store.keys()], ['teamsjoin:/meet/123'], 'p= never lands in the latch key')
+
+  const second = runScript('https://teams.microsoft.com/meet/123?p=other', { store })
+  assertEqual(second.state.href, 'https://teams.microsoft.com/meet/123?p=other', 'same /meet/ id with different p= does not fire')
+  assertEqual(second.state.stopCalls, 0, 'same /meet/ id with different p= does not call window.stop')
+}
+
+{
+  const href = 'https://teams.microsoft.com/meet/123'
+  const { state } = runScript(href, { standalone: true })
+  assertEqual(state.href, href, 'standalone /meet/ yields no fire')
+  assertEqual(state.stopCalls, 0, 'standalone /meet/ does not call window.stop')
+}
+
+{
+  const store = new Map()
+  const first = runScript('https://teams.microsoft.com/meet/user@example.com', { store })
+  assertEqual(
+    first.state.href,
+    'msteams://teams.microsoft.com/meet/user@example.com',
+    '/meet/user@example.com fires'
+  )
+  const second = runScript('https://teams.microsoft.com/meet/user%40example.com', { store })
+  assertEqual(
+    second.state.href,
+    'https://teams.microsoft.com/meet/user%40example.com',
+    '/meet/user%40example.com stands down on the folded latch key'
+  )
+  assertDeepEqual(
+    [...store.keys()],
+    ['teamsjoin:/meet/user@example.com'],
+    '%40 and @ /meet/ ids share one latch key'
+  )
+}
+
+assertFires(
+  'https://teams.microsoft.com/meet/omarchyWebapp?p=omarchyWebapp',
+  'msteams://teams.microsoft.com/meet/omarchyWebapp?p=omarchyWebapp',
+  'marker collision in /meet/ id and p= still fires'
+)
+assertFires(
+  launcherHref('teams.microsoft.com', '/_#/meet/omarchyWebapp?p=omarchyWebapp'),
+  'msteams://teams.microsoft.com/meet/omarchyWebapp?p=omarchyWebapp',
+  'marker collision launcher form still fires'
+)
+
+{
+  const href = 'https://teams.microsoft.com/meet/123?p=abc&omarchyWebapp=1'
+  const store = new Map()
+  const first = runScript(href, { store })
+  assertEqual(first.state.href, href, 'page-query marker on /meet/ stands down')
+  assertEqual(first.state.stopCalls, 0, 'page-query marker on /meet/ does not call window.stop')
+  assert(store.size > 0, 'page-query marker on /meet/ latches')
+}
+
+{
+  const href = launcherHref('teams.microsoft.com', '/_#/meet/123?p=abc&omarchyWebapp=1')
+  assert(href.includes('omarchyWebapp%3D1'), 'launcher collision marker href encodes omarchyWebapp%3D1', href)
+  const store = new Map()
+  const first = runScript(href, { store })
+  assertEqual(first.state.href, href, 'encoded marker inside url= stands down')
+  assertEqual(first.state.stopCalls, 0, 'encoded marker inside url= does not call window.stop')
+  assert(store.size > 0, 'encoded marker inside url= latches')
+}
+
+{
+  const href = 'https://teams.microsoft.com/v2/?meetingjoin=true#/meet/123?omarchyWebapp=1'
+  const store = new Map()
+  const first = runScript(href, { store })
+  assertEqual(first.state.href, href, 'fragment-query marker on /meet/ stands down')
+  assertEqual(first.state.stopCalls, 0, 'fragment-query marker on /meet/ does not call window.stop')
+  assert(store.size > 0, 'fragment-query marker on /meet/ latches')
+}
+
+assertFires(
+  'https://teams.microsoft.com/meet/123?p=a/b',
+  'msteams://teams.microsoft.com/meet/123?p=a/b',
+  'slash in passcode is kept'
+)
+assertFires(
+  'https://teams.microsoft.com/meet/123/extra?p=abc',
+  'msteams://teams.microsoft.com/meet/123',
+  '/meet/123/extra drops the tail and the query after it'
+)
+
+{
+  const encoded = new URL('https://teams.microsoft.com/convene/meetings')
+  encoded.searchParams.set('url', '/_#/meet/123?p=abc')
+  assertNoFire(encoded.href, 'encoded /convene/?url=/_#/meet/ on teams.microsoft.com')
+
+  assertNoFire(
+    'https://gov.teams.microsoft.us/convene/meetings?url=/meet/123?p=abc',
+    'raw /convene/?url=/meet/123 on gov'
+  )
+  assertNoFire(
+    'https://teams.microsoft.com/convene/meetings?url=/_#/meet/123?p=abc',
+    'unencoded /convene/?url=/_#/meet/ (hash on a non-/v2/ page)'
+  )
+}
+
+assertNoFire(
+  launcherHref('teams.microsoft.com', '/_#/l/chat/0/0?users=a', { type: 'chat' }),
+  'launcher url= chat payload'
+)
+assertNoFire(
+  launcherHref('teams.microsoft.com', '/_#/l/channel/19:x@thread.tacv2/General'),
+  'launcher url= channel payload'
+)
+
+const a12Hosts = ['teams.microsoft.com', 'gov.teams.microsoft.us']
+const a12Paths = [
+  '/v2/?meetingjoin=true#/light-meetings/launch',
+  '/light-meetings/launch?foo=1',
+  '/l/meeting/new?subject=x',
+  '/l/chat/19:thread@thread.v2',
+  '/l/call/19:thread@thread.v2',
+  '/l/channel/19:x@thread.tacv2/General',
+  '/l/team/19:x@thread.tacv2',
+  '/l/message/19:x@thread.tacv2/1788865197722',
+  '/l/entity/foo',
+  '/l/app/foo',
+  '/l/task/foo',
+  '/l/file/foo',
+  '/l/meeting-share/foo',
+]
+for (const host of a12Hosts) {
+  for (const path of a12Paths) {
+    assertNoFire(`https://${host}${path}`, `${host} ${path}`)
+  }
+}
+assertNoFire(
+  'https://teams.microsoft.com/meetup-join/19:x',
+  'meetup-join without /l/'
+)
+assertNoFire('https://teams.microsoft.com/meet/', '/meet/ with an empty id')
 JS
