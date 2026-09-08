@@ -2,10 +2,21 @@
 # omarchy:summary=Open Teams meetings from browser protocol links
 # omarchy:args=[url]
 url="$1"; path=""
-if [[ $url =~ ^msteams:/*teams\.(microsoft\.com|live\.com|cloud\.microsoft)/(l/meetup-join/19(:|%3[aA])[^[:space:]]+)$ ]]; then  # any leading slashes: msteams:teams. .. msteams:///teams.
-  host="teams.${BASH_REMATCH[1]}"; path="${BASH_REMATCH[2]}"
-elif [[ $url =~ ^msteams:/*(l/meetup-join/19(:|%3[aA])[^[:space:]]+)$ ]]; then  # any leading slashes, host-less: msteams:l/.. msteams:///l/..
-  host="teams.microsoft.com"; path="${BASH_REMATCH[1]}"
+# Host alternation is unquoted in =~ so the | branches stay regex. Patterns live
+# in variables so a # in the short-shape class cannot start a comment.
+hosts='teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|gov\.teams\.microsoft\.us|dod\.teams\.microsoft\.us|teams\.microsoftonline\.cn'
+hosted_classic="^msteams:/*($hosts)/l/meetup-join/(19(:|%3[aA])[^[:space:]]+)$"
+hosted_short="^msteams:/*($hosts)/meet/([^/?#[:space:]]+)(\?[^#[:space:]]*)?(#[^[:space:]]*)?(/[^[:space:]]*)?$"
+bare_classic="^msteams:/*l/meetup-join/(19(:|%3[aA])[^[:space:]]+)$"
+bare_short="^msteams:/*meet/([^/?#[:space:]]+)(\?[^#[:space:]]*)?(#[^[:space:]]*)?(/[^[:space:]]*)?$"
+if [[ $url =~ $hosted_classic ]]; then  # any leading slashes: msteams:teams. .. msteams:///teams.
+  host="${BASH_REMATCH[1]}"; path="l/meetup-join/${BASH_REMATCH[2]}"
+elif [[ $url =~ $hosted_short ]]; then
+  host="${BASH_REMATCH[1]}"; path="meet/${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+elif [[ $url =~ $bare_classic ]]; then  # any leading slashes, host-less: msteams:l/.. msteams:///l/..
+  host="teams.microsoft.com"; path="l/meetup-join/${BASH_REMATCH[1]}"
+elif [[ $url =~ $bare_short ]]; then
+  host="teams.microsoft.com"; path="meet/${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
 fi
 # --gtk-version=3 mirrors the flag in teams-for-linux's own packaged .desktop Exec.
 if omarchy-cmd-present teams-for-linux; then

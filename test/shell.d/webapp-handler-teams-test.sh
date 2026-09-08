@@ -131,6 +131,24 @@ meeting_urls=(
   'msteams:///l/meetup-join/19:meeting_abc@thread.v2'
   'msteams://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2'
   'msteams://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc@thread.v2'
+  'msteams://teams.microsoft.com/meet/123?p=abc'
+  'msteams://teams.cloud.microsoft/meet/123?p=abc'
+  'msteams://teams.live.com/meet/123?p=abc'
+  'msteams://gov.teams.microsoft.us/meet/123?p=abc'
+  'msteams://dod.teams.microsoft.us/meet/123?p=abc'
+  'msteams://teams.microsoftonline.cn/meet/123?p=abc'
+  'msteams://gov.teams.microsoft.us/l/meetup-join/19:meeting_abc@thread.v2/0?context=%7B%22Tid%22%3A%22t%22%7D'
+  'msteams://dod.teams.microsoft.us/l/meetup-join/19:meeting_abc@thread.v2/0?context=%7B%22Tid%22%3A%22t%22%7D'
+  'msteams://dod.teams.microsoft.us/l/meetup-join/19:dod:meeting_abc@thread.v2/0?context=%7B%22Tid%22%3A%22t%22%7D'
+  'msteams://teams.microsoft.com/l/meetup-join/19%3ax@thread.tacv2/1788865197722?context=%7B%22Tid%22%3A%22t%22%7D'
+  'msteams://teams.microsoft.com/meet/123'
+  'msteams://teams.microsoft.com/meet/user@example.com?p=abc'
+  'msteams:/meet/123?p=abc'
+  'msteams:///meet/123?p=abc'
+  'msteams://gov.teams.microsoft.us/meet/123?p=abc#/join'
+  'msteams://teams.live.com/meet/123#/join'
+  'msteams://teams.microsoft.com/meet/123?p=a/b'
+  'msteams://teams.microsoft.com/meet/123/extra?p=abc'
 )
 
 meeting_https=(
@@ -144,6 +162,24 @@ meeting_https=(
   'https://teams.microsoft.com/l/meetup-join/19:meeting_abc@thread.v2?omarchyWebapp=1'
   'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2?omarchyWebapp=1'
   'https://teams.microsoft.com/l/meetup-join/19%3Ameeting_abc@thread.v2?omarchyWebapp=1'
+  'https://teams.microsoft.com/meet/123?p=abc&omarchyWebapp=1'
+  'https://teams.cloud.microsoft/meet/123?p=abc&omarchyWebapp=1'
+  'https://teams.live.com/meet/123?p=abc&omarchyWebapp=1'
+  'https://gov.teams.microsoft.us/meet/123?p=abc&omarchyWebapp=1'
+  'https://dod.teams.microsoft.us/meet/123?p=abc&omarchyWebapp=1'
+  'https://teams.microsoftonline.cn/meet/123?p=abc&omarchyWebapp=1'
+  'https://gov.teams.microsoft.us/l/meetup-join/19:meeting_abc@thread.v2/0?context=%7B%22Tid%22%3A%22t%22%7D&omarchyWebapp=1'
+  'https://dod.teams.microsoft.us/l/meetup-join/19:meeting_abc@thread.v2/0?context=%7B%22Tid%22%3A%22t%22%7D&omarchyWebapp=1'
+  'https://dod.teams.microsoft.us/l/meetup-join/19:dod:meeting_abc@thread.v2/0?context=%7B%22Tid%22%3A%22t%22%7D&omarchyWebapp=1'
+  'https://teams.microsoft.com/l/meetup-join/19%3ax@thread.tacv2/1788865197722?context=%7B%22Tid%22%3A%22t%22%7D&omarchyWebapp=1'
+  'https://teams.microsoft.com/meet/123?omarchyWebapp=1'
+  'https://teams.microsoft.com/meet/user@example.com?p=abc&omarchyWebapp=1'
+  'https://teams.microsoft.com/meet/123?p=abc&omarchyWebapp=1'
+  'https://teams.microsoft.com/meet/123?p=abc&omarchyWebapp=1'
+  'https://gov.teams.microsoft.us/meet/123?p=abc&omarchyWebapp=1#/join'
+  'https://teams.live.com/meet/123?omarchyWebapp=1#/join'
+  'https://teams.microsoft.com/meet/123?p=a/b&omarchyWebapp=1'
+  'https://teams.microsoft.com/meet/123?omarchyWebapp=1'
 )
 
 for i in "${!meeting_urls[@]}"; do
@@ -159,6 +195,11 @@ for i in "${!meeting_urls[@]}"; do
   run_handler "$url"
   assert_webapp "$https" \
     "web app opens meeting $url with omarchyWebapp marker"
+
+  if [[ $url == *gov.teams.microsoft.us* || $url == *dod.teams.microsoft.us* || $url == *teams.microsoftonline.cn* ]]; then
+    [[ $https != *teams.microsoft.com* ]] ||
+      fail "gov/DoD/cn fallback keeps the clicked host" "$https"
+  fi
 done
 
 # Marker join: & vs ? , placed before any #fragment.
@@ -185,7 +226,8 @@ home_url='https://teams.microsoft.com/'
 non_meetings=(
   'msteams://teams.microsoft.com.evil.test/l/meetup-join/19:meeting_abc@thread.v2'
   'msteams://teams.microsoft.com/l/chat/19:thread@thread.v2'
-  'msteams://teams.microsoft.com/meet/abc123'
+  'msteams://teams.microsoft.us/meet/abc123'
+  'msteams://gov.teams.microsoft.us.evil.test/meet/abc123'
 )
 
 for url in "${non_meetings[@]}"; do
@@ -200,10 +242,11 @@ for url in "${non_meetings[@]}"; do
     "web app opens Teams home for non-meeting $url"
 done
 
-# Meeting-shaped msteams: URLs whose meetup-join tail is malformed must not
-# match. The regex rejects whitespace in the tail, and a leading dash where
-# the id should start (meetup-join/-19:...), so neither becomes a meeting
-# web_url. Same home fallback as the non-meeting cases above.
+# Meeting-shaped msteams: URLs whose meetup-join or /meet/ tail is malformed
+# must not match. The regex rejects whitespace in the tail (both shapes), a
+# leading dash where the id should start (meetup-join/-19:...), and an empty
+# /meet/ id, so none becomes a meeting web_url. Same home fallback as the
+# non-meeting cases above.
 begin_case web
 run_handler 'msteams://teams.microsoft.com/l/meetup-join/19:meeting abc@thread.v2'
 assert_webapp "$home_url" \
@@ -223,6 +266,26 @@ begin_case web
 run_handler 'msteams://teams.microsoft.com/l/meetup-join/-19:meeting_abc@thread.v2'
 assert_webapp "$home_url" \
   "web app opens Teams home when meetup-join tail has a leading dash"
+
+begin_case web
+run_handler 'msteams://teams.microsoft.com/meet/123 456'
+assert_webapp "$home_url" \
+  "web app opens Teams home when /meet/ id contains a space"
+
+begin_case web
+run_handler $'msteams://teams.microsoft.com/meet/123\t456'
+assert_webapp "$home_url" \
+  "web app opens Teams home when /meet/ id contains a tab"
+
+begin_case web
+run_handler $'msteams://teams.microsoft.com/meet/123\n456'
+assert_webapp "$home_url" \
+  "web app opens Teams home when /meet/ id contains a newline"
+
+begin_case web
+run_handler 'msteams://teams.microsoft.com/meet/'
+assert_webapp "$home_url" \
+  "web app opens Teams home when /meet/ id is empty"
 
 begin_case native
 run_handler
@@ -307,6 +370,42 @@ mkdir -p "$STATE_HOME/omarchy"
 printf '%s\n' "$stamp_id" >"$STATE_HOME/omarchy/teams-join-last"
 run_handler "$meeting_plain"
 assert_webapp "$web_plain" "a one-field throttle stamp opens"
+
+short_meet='msteams://teams.microsoft.com/meet/123?p=abc'
+short_https='https://teams.microsoft.com/meet/123?p=abc&omarchyWebapp=1'
+short_other_p='msteams://teams.microsoft.com/meet/123?p=other'
+short_cloud='msteams://teams.cloud.microsoft/meet/123?p=abc'
+
+begin_case web
+run_handler "$short_meet"
+assert_webapp "$short_https" "/meet/123?p=abc first open launches the meeting"
+read -r got_id got_t <"$STATE_HOME/omarchy/teams-join-last"
+[[ $got_id == "meet/123" ]] ||
+  fail "throttle stamp stores meet/123 without p=" "$got_id"
+pass "throttle stamp first field is meet/123 (no p=)"
+run_handler "$short_meet"
+assert_file_content "$WEBAPP_LOG" "throttle /meet/ second open does not launch again" "$short_https"
+assert_throttled "/meet/123?p=abc twice in-window opens once"
+
+begin_case web
+run_handler "$short_meet"
+run_handler "$short_other_p"
+assert_file_content "$WEBAPP_LOG" "same /meet/ id with a different p= does not launch again" "$short_https"
+assert_throttled "same /meet/ id with p=other inside the window is throttled"
+
+begin_case web
+run_handler "$short_meet"
+run_handler "$short_cloud"
+assert_file_content "$WEBAPP_LOG" "cross-origin /meet/ hop does not launch again" "$short_https"
+assert_throttled "same /meet/ id on teams.cloud.microsoft is throttled (host-independent key)"
+
+begin_case web
+run_handler "$meeting_plain"
+run_handler "$short_meet"
+assert_file_content "$WEBAPP_LOG" "classic and /meet/ ids launch twice" \
+  "$web_plain"$'\n'"$short_https"
+assert_file_content "$UWSM_LOG" "classic then /meet/ does not launch teams-for-linux"
+pass "a classic id and a /meet/ id in sequence both open"
 
 # .desktop claims the msteams scheme.
 [[ -f $DESKTOP ]] || fail "Microsoft Teams Meeting.desktop exists"

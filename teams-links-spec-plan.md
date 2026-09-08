@@ -30,13 +30,15 @@ plain Teams web app. This work does not depend on it and does not change it.
 
 ## Requirements
 
-1. Clicking a Teams meeting link (`https://<host>/l/meetup-join/19:...`, or the `19%3a`
-   form, on `teams.microsoft.com`, `teams.cloud.microsoft`, or `teams.live.com`) in a
-   supported browser opens the meeting in the Teams app instead of a browser tab. No extra
-   click beyond the calendar link. At most a one-time browser "open msteams?" allow per Teams
-   host (see Constraints).
+1. Clicking a Teams meeting link (either shape in Requirement 7, on any host in
+   Requirement 8) in a supported browser opens the meeting in the Teams app instead of a
+   browser tab. No extra click beyond the calendar link. At most a one-time browser "open
+   msteams?" allow per Teams host (see Constraints).
 2. "The Teams app" is `teams-for-linux` when installed, otherwise an Omarchy web-app window
-   on the meeting. No configuration beyond installing `teams-for-linux`.
+   on the meeting. On the commercial and consumer clouds, no configuration beyond installing
+   `teams-for-linux`. A GCC High or DoD user must also point `teams-for-linux` at their cloud
+   in its own config (A9, Decision 9). The web-app fallback needs no configuration on any
+   cloud.
 3. Supported browsers: Chromium-based browsers Omarchy manages through `*-flags.conf`, and
    Zen. Firefox proper is out of scope (see Constraints). Google Chrome 137+ ignores
    `--load-extension` in branded builds, a gap every Omarchy extension shares. Chrome is
@@ -81,11 +83,13 @@ plain Teams web app. This work does not depend on it and does not change it.
 - A4. With the `teams-for-linux` pacman/AUR package installed (on `PATH`), the meeting opens
   in it, with no `xdg-mime` setup.
 - A5. Handler precedence, in order:
-  1. A recognised meeting URL goes to `teams-for-linux` unchanged when installed. Otherwise
-     it goes to a web-app window on the matching `https://` URL plus `omarchyWebapp=1`
-     (joined with `&` when a query exists, `?` when not, placed before any fragment). The
-     Design 2 throttle is the exception: a repeat of the same meeting inside its window
-     makes the handler exit without a window.
+  1. A recognised meeting URL (either shape in Requirement 7 with a listed host in
+     Requirement 8, or the host-less v1 form `msteams:/<path>` that Design 2 already
+     accepts) goes to `teams-for-linux` unchanged when installed. Otherwise it goes to a
+     web-app window on the matching `https://` URL plus `omarchyWebapp=1` (joined with `&`
+     when a query exists, `?` when not, placed before any fragment). Host-less v1 falls
+     back to `teams.microsoft.com`. The Design 2 throttle is the exception: a repeat of
+     the same meeting inside its window makes the handler exit without a window.
   2. Any other `msteams:` URL goes to `teams-for-linux` unchanged when installed (its own
      allow-list decides). No argument, or a non-`msteams:` argument, opens `teams-for-linux`
      with no URL. Without `teams-for-linux`, everything in this item opens a web-app window
@@ -96,11 +100,11 @@ plain Teams web app. This work does not depend on it and does not change it.
   of the `.desktop` (followed by one `update-desktop-database` per run so the scheme
   resolves). The migration makes no `sudo` call and shows no prompt, with or without Zen: the
   Zen policy ships as a package-owned file (Decision 8b), not through the migration.
-- A8. The content script injects on the three Teams hosts, finds the meeting (in the launcher
-  `url=` parameter, the page query, or the URL fragment), and auto-navigates to
-  `msteams://teams.microsoft.com/...` (the page host is dropped) at most once per meeting per
-  tab. It does not fire in the web-app window or on a marked URL. Design 1 has the guard
-  mechanics.
+- A8. The content script injects on the Requirement 8 host set, finds the meeting (classic
+  `/l/meetup-join/` or short `/meet/`, in the launcher `url=` parameter, the page query, or
+  a `/v2/` URL fragment), and auto-navigates to `msteams://<page-host>/...` (the page host
+  is kept) at most once per meeting per tab. It does not fire in the web-app window or on a
+  marked URL. Design 1 has the guard mechanics.
 
 ## Constraints
 
@@ -126,12 +130,12 @@ plain Teams web app. This work does not depend on it and does not change it.
 - One extension source tree, used by both browser families. Firefox needs
   `browser_specific_settings.gecko.id`; Chromium ignores it. The extension is content-script
   only (no background), so the manifest-v3 vs event-page split that sank the earlier design
-  does not arise. `host_permissions` for the three Teams hosts.
+  does not arise. `host_permissions` for the Requirement 8 host set.
 - Browsers prompt once before opening an external scheme. Because the script fires from
   Microsoft's own launcher page, the prompt's "always allow" is keyed to the
   `teams.microsoft.com` origin (a trusted origin). Chromium keys the grant per origin.
   Gecko's keying is not yet confirmed; Phase 3 records what Zen's prompt shows. So a user
-  may see the prompt once per Teams host they hit (up to three), not once globally. After
+  may see the prompt once per Teams host they hit (up to the size of the host set), not once globally. After
   granting on a host, later meetings on that host are silent. Not our problem to suppress.
 
 ## Non-goals
@@ -140,8 +144,6 @@ plain Teams web app. This work does not depend on it and does not change it.
   `window.stop()` so the tab does not forward into the web join UI; Phase 1 Step 0 decides
   whether to keep it. Either way the script never navigates the tab to another page or
   closes it.
-- (Formerly a non-goal: `/meet/<id>` short links and `teams.live.com/meet`. These are now
-  IN scope -- see the "Extension: every meeting format, every cloud" section below.)
 - Shipping Chromium support first and Zen later. Zen is the default browser here.
 - Pinning `x-scheme-handler/msteams` in `default/applications/mimeapps.list`.
 - A Flatpak or AppImage `teams-for-linux` (only the pacman/AUR package is detected). Its own
@@ -154,12 +156,12 @@ plain Teams web app. This work does not depend on it and does not change it.
 
 ## Security
 
-- The content script declares `host_permissions` for the three Teams hosts only (no
+- The content script declares `host_permissions` for the Requirement 8 host set only (no
   `<all_urls>`, no `tabs`, no `webNavigation`, no background). It reads meeting URLs on
   those hosts and fires `msteams:` for the real meeting shape only.
 - The `msteams:` launch is fired from a Teams-host page, so the browser's "always allow" is
   keyed to that origin (`teams.microsoft.com` in the normal flow), not an arbitrary page or
-  the extension. The script is injected on the three Teams hosts and acts only on the
+  the extension. The script is injected on the Requirement 8 host set and acts only on the
   meeting shape. It never runs on other origins.
 - The `msteams:` value is bounded on each path. On the web-app path the handler re-validates
   host and path against its regex, so a look-alike host or stray path becomes the Teams home
@@ -197,18 +199,19 @@ Data flow:
 ### 1. Content script: `default/chromium/extensions/teams-join`
 
 Manifest v3, content-script only, no background, no UI. The `content_scripts` block matches
-exactly `https://teams.microsoft.com/*`, `https://teams.cloud.microsoft/*`, and
-`https://teams.live.com/*` (no `http://`, no `<all_urls>`) at `run_at: document_start`, with
-`host_permissions` for the same three hosts. The script:
+the Requirement 8 host set (`https://teams.microsoft.com/*`,
+`https://teams.cloud.microsoft/*`, `https://teams.live.com/*`,
+`https://gov.teams.microsoft.us/*`, `https://dod.teams.microsoft.us/*`,
+`https://teams.microsoftonline.cn/*`; no `http://`, no `<all_urls>`) at
+`run_at: document_start`, with `host_permissions` for the same hosts. The script:
 
-- Finds the meeting path `/l/meetup-join/19(:|%3a)...` in the launcher `url=` parameter, the
-  page query, or the URL fragment (the Linux web client is
-  `teams.microsoft.com/v2/?meetingjoin=true#/l/meetup-join/...`). It keeps the meeting's own
-  `context=` query and drops only the launcher's added params (`anon`, `deeplinkId`,
-  `launchAgent`, `enablemcas`, `suppressPrompt`) wherever they sit. It rebuilds
-  `msteams://teams.microsoft.com/l/meetup-join/...`. It assumes the `url=` parameter is
-  URL-encoded (so `context`'s own `{`/`"` arrive percent-encoded); `searchParams.get`
-  decodes one layer, and the extractor stops only at a fragment or whitespace.
+- Finds either meeting shape (classic `/l/meetup-join/19(:|%3a)...` or short `/meet/<id>`)
+  in the launcher `url=` parameter (launcher page only), the page path+query, or a `/v2/`
+  URL fragment. It keeps only `p=` and `context=` (Requirement 11) and emits
+  `msteams://<page-host>/<path>` (the clicked host is kept; Requirement 10). It assumes
+  the `url=` parameter is URL-encoded (so `context`'s own `{`/`"` arrive percent-encoded);
+  `searchParams.get` decodes one layer, and the extractor stops only at a fragment or
+  whitespace.
 - Standalone guard (the origin-independent one). The web-app window is a Chromium `--app`
   window, which reports `display-mode: standalone`. The script stands down there, so it never
   fires in a web-app window regardless of origin, marker, or elapsed time. This closes the
@@ -216,8 +219,10 @@ exactly `https://teams.microsoft.com/*`, `https://teams.cloud.microsoft/*`, and
   host after more than 20s (past the throttle, past the per-origin latch). Phase 3 confirms
   standalone distinguishes the web-app window from a normal tab. The marker and latch below
   are the proven fallback where it does not.
-- Marker loop guard. If the page URL contains the `omarchyWebapp` token (any form, including
-  `omarchyWebapp%3D1`), the script stands down (Decision 3).
+- Marker loop guard. If `omarchyWebapp` is a query KEY in the page query, the fragment
+  query, or the decoded `url=` value (any form, including `omarchyWebapp%3D1` inside
+  `url=`), the script stands down (Decision 3). A `/meet/` id or passcode containing the
+  literal token still fires.
 - Per-meeting latch. Firing and standing down both latch a per-meeting key in
   `sessionStorage` (per origin per tab). So a later same-origin hop for that meeting does not
   re-fire, while a different meeting in the same tab still can. The observed drift is a
@@ -233,22 +238,33 @@ Core of `content.js`. The marker guard was validated in the Phase 0 spike. The s
 stand-down is a Phase 3 hand-check. `window.stop()` is settled in Phase 1 Step 0.
 
 ```js
-// Match the meetup-join path (id required, so `+`). `[^#\s]+` keeps encoded chars and
-// stops only at a fragment or whitespace, which browsers never leave raw in a URL.
+// Anchored at a path start so a meeting buried in another page's query cannot
+// match. Classic keeps its settled tail (`[^#\s]+` after 19:/19%3a, no /0 or
+// meeting_ requirement). Short is meet/<id> with optional ?query; a /extra tail
+// stops the match at the id.
 function meetingPath(str) {
   if (!str) return null;
-  var m = str.match(/\/l\/meetup-join\/19(?::|%3[aA])[^#\s]+/);
+  var m = str.match(/^\/(?:l\/meetup-join\/19(?::|%3[aA])[^#\s]+|meet\/[^\/?#\s]+(?:\?[^#\s]*)?)/);
   if (!m) return null;
   var raw = m[0], q = raw.indexOf("?");
   if (q < 0) return raw;
-  // Keep the meeting's own query (context=...); drop only the launcher's added params,
-  // wherever they sit, so a leading deeplinkId= cannot slice off context=.
-  var drop = /^(anon|deeplinkId|launchAgent|enablemcas|suppressPrompt)$/;
-  var kept = raw.slice(q + 1).split("&").filter(function (x) { return !drop.test(x.split("=")[0]); });
+  // Keep only the meeting's own query (p=, context=). Everything else, including
+  // unknown future launcher keys, is dropped (Requirement 11).
+  var keep = /^(p|context)$/;
+  var kept = raw.slice(q + 1).split("&").filter(function (x) { return keep.test(x.split("=")[0]); });
   return kept.length ? raw.slice(0, q) + "?" + kept.join("&") : raw.slice(0, q);
 }
+// omarchyWebapp as a query KEY in one already-decoded layer, not a substring of
+// a path, id, or passcode. URL (not URLSearchParams) because the Node sandbox
+// injects only URL.
+function hasMarker(layer) {
+  if (!layer) return false;
+  var q = layer.indexOf("?");
+  if (q < 0) return false;
+  try { return new URL("https://x/?" + layer.slice(q + 1)).searchParams.has("omarchyWebapp"); }
+  catch (e) { return false; }
+}
 var href = window.location.href;
-var marker = href.indexOf("omarchyWebapp") !== -1;      // loop guard: bare token, survives URL-encoding
 // Origin- and time-independent guard: the web-app window the handler opens is a Chromium
 // --app window, which reports standalone; a normal browser tab does not. Standing down here
 // closes the cross-origin / >20s sign-in drift the per-origin latch and the 20s throttle can
@@ -257,9 +273,23 @@ var marker = href.indexOf("omarchyWebapp") !== -1;      // loop guard: bare toke
 var standalone = false;
 try { standalone = window.matchMedia("(display-mode: standalone)").matches; } catch (e) {}
 var path = null;
-try { var u = new URL(href); path = meetingPath(u.searchParams.get("url")) || meetingPath(href); }
-catch (e) { path = meetingPath(href); }
-var target = path ? ("msteams://teams.microsoft.com" + path) : null;
+var marker = false;
+try {
+  var u = new URL(href);
+  // Page query, fragment query, and decoded url= (any page: a match can only stand
+  // down, which the Security tie-break prefers). searchParams.get decodes one layer
+  // so omarchyWebapp%3D1 inside url= still counts.
+  marker = hasMarker(u.search) || hasMarker(u.hash) || hasMarker(u.searchParams.get("url") || "");
+  if (u.pathname === "/dl/launcher/launcher.html") {
+    var v = u.searchParams.get("url") || "";
+    path = meetingPath(v) || meetingPath(v.slice(v.indexOf("#") + 1));
+  }
+  if (!path) path = meetingPath(u.pathname + u.search);
+  if (!path && (u.pathname === "/v2/" || u.pathname === "/v2")) {
+    path = meetingPath(u.hash.slice(1));
+  }
+} catch (e) {}
+var target = path ? ("msteams://" + u.hostname + path) : null;
 // Per-meeting latch (per origin per tab): key on the normalized meeting path so the same
 // meeting via different encodings maps to one key. Firing OR standing down latches it, so a
 // later same-origin hop for THIS meeting -- e.g. a launcher->/v2/ hop that drops the marker
@@ -311,10 +341,21 @@ path. Otherwise the handler opens a web-app window on the `https://` meeting URL
 # omarchy:summary=Open Teams meetings from browser protocol links
 # omarchy:args=[url]
 url="$1"; path=""
-if [[ $url =~ ^msteams:/*teams\.(microsoft\.com|live\.com|cloud\.microsoft)/(l/meetup-join/19(:|%3[aA])[^[:space:]]+)$ ]]; then  # any leading slashes: msteams:teams. .. msteams:///teams.
-  host="teams.${BASH_REMATCH[1]}"; path="${BASH_REMATCH[2]}"
-elif [[ $url =~ ^msteams:/*(l/meetup-join/19(:|%3[aA])[^[:space:]]+)$ ]]; then  # any leading slashes, host-less: msteams:l/.. msteams:///l/..
-  host="teams.microsoft.com"; path="${BASH_REMATCH[1]}"
+# Host alternation is unquoted in =~ so the | branches stay regex. Patterns live
+# in variables so a # in the short-shape class cannot start a comment.
+hosts='teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|gov\.teams\.microsoft\.us|dod\.teams\.microsoft\.us|teams\.microsoftonline\.cn'
+hosted_classic="^msteams:/*($hosts)/l/meetup-join/(19(:|%3[aA])[^[:space:]]+)$"
+hosted_short="^msteams:/*($hosts)/meet/([^/?#[:space:]]+)(\?[^#[:space:]]*)?(#[^[:space:]]*)?(/[^[:space:]]*)?$"
+bare_classic="^msteams:/*l/meetup-join/(19(:|%3[aA])[^[:space:]]+)$"
+bare_short="^msteams:/*meet/([^/?#[:space:]]+)(\?[^#[:space:]]*)?(#[^[:space:]]*)?(/[^[:space:]]*)?$"
+if [[ $url =~ $hosted_classic ]]; then  # any leading slashes: msteams:teams. .. msteams:///teams.
+  host="${BASH_REMATCH[1]}"; path="l/meetup-join/${BASH_REMATCH[2]}"
+elif [[ $url =~ $hosted_short ]]; then
+  host="${BASH_REMATCH[1]}"; path="meet/${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+elif [[ $url =~ $bare_classic ]]; then  # any leading slashes, host-less: msteams:l/.. msteams:///l/..
+  host="teams.microsoft.com"; path="l/meetup-join/${BASH_REMATCH[1]}"
+elif [[ $url =~ $bare_short ]]; then
+  host="teams.microsoft.com"; path="meet/${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
 fi
 # --gtk-version=3 mirrors the flag in teams-for-linux's own packaged .desktop Exec.
 if omarchy-cmd-present teams-for-linux; then
@@ -350,11 +391,10 @@ Notes on the handler:
   non-Chromium default, Zen included, to `chromium.desktop --app`. So the window loads the
   same `chromium-flags.conf` and the same extension. The `omarchyWebapp` marker (same origin)
   plus the ~20s throttle (any origin) keep it from looping.
-- The web-app URL keeps the matched host (`teams.live.com` / `teams.cloud.microsoft` stay
-  themselves), even though the content script always rebuilds `msteams:` to
-  `teams.microsoft.com`. `teams-for-linux`'s allow-list accepts all three and `context`
-  carries the tenant, so both are fine. The handler's three-host regex therefore guards
-  external `msteams:` input, not anything the script emits.
+- The web-app URL keeps the matched host. The content script emits
+  `msteams://<page-host>/...` (Requirement 10), so the handler's host list guards both the
+  script's output and external `msteams:` input. A host outside the list lands on the Teams
+  home page (fallback only; native forwarding is host-blind).
 - The throttle refuses a second web-app window for the same meeting id within ~20s. It sits
   after the native-client branch, so on the native path a cross-origin drift would at worst
   hand `teams-for-linux` the same meeting twice (a duplicate join prompt, not a loop).
@@ -852,8 +892,9 @@ The migration, each step idempotent:
 
 Tests:
 
-- Manifest test asserts: MV3; `content_scripts.matches` equals exactly the three `https://`
-  host patterns (no `http://`, no `<all_urls>`); `host_permissions` for the same three;
+- Manifest test asserts: MV3; `content_scripts.matches` equals exactly the `https://` host
+  patterns (three at Phase 2; widened to the Requirement 8 set in Phase 4) (no `http://`, no
+  `<all_urls>`); `host_permissions` for the same set;
   `run_at: document_start`; no `webNavigation`/`tabs`/background; non-empty `gecko.id`.
 - A `run_node_test` behaviour test runs `content.js` with `vm.runInNewContext`. It uses a
   fresh sandbox per case, since Node 26 ships a native `sessionStorage` global and a direct
