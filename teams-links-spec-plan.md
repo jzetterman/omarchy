@@ -1033,10 +1033,12 @@ Six changes. Comments update with the code.
    carried. No live link carries a tail (research B), so this is tolerance, not a feature.
    `/meet/` cannot match inside `/l/meetup-join/` or `/convene/meetings` (no `/` after `meet`).
 
-   The `^\/` anchor is what makes "`url=` is read only on the launcher page" true mechanically: a
-   meeting path sitting raw inside some other page's query (`/convene/meetings?url=/meet/123`)
-   never starts the candidate string, so it never matches. Today's whole-`href` substring scan
-   (line 25) would match it.
+   The `^\/` anchor stops a meeting path buried inside another page's query from matching the
+   `pathname+search` candidate: `/convene/meetings?url=/meet/123` does not START with the meeting
+   shape, so it never matches (today's whole-`href` substring scan on line 25 would). Note: what
+   makes "`url=` is read only on the launcher page" true is change 2's
+   `pathname === "/dl/launcher/launcher.html"` gate plus the hash-only-on-`/v2/` rule, NOT this
+   anchor -- do not drop the pathname gate.
 
 2. **Candidate strings instead of a whole-`href` scan.** Replace lines 24-26 with: parse `href`
    once (`u = new URL(href)`), then
@@ -1210,10 +1212,13 @@ New cases (A-number in brackets):
   the real marker still stands down: `/meet/123?p=abc&omarchyWebapp=1` (page query), the launcher
   form with `omarchyWebapp%3D1` inside `url=`, and `/v2/?meetingjoin=true#/meet/123?omarchyWebapp=1`
   (fragment query) each stand down and latch.
-- `/convene/` negative, two forms [A13, A15]:
-  `https://<host>/convene/meetings?url=<searchParams-encoded /_#/meet/123?p=abc>` and the raw form
-  `?url=/meet/123?p=abc` (no `/_#`, so the browser keeps it in the query) both do not fire and do
-  not latch. One on `teams.microsoft.com`, one on `gov.teams.microsoft.us`.
+- `/convene/` negative, THREE forms [A13, A15]:
+  `https://<host>/convene/meetings?url=<searchParams-encoded /_#/meet/123?p=abc>` (hash stays in
+  the query), the raw `?url=/meet/123?p=abc` (no `/_#`, kept in the query), AND -- the case that
+  guards the fix -- the UNENCODED `?url=/_#/meet/123?p=abc` (the browser puts `#/meet/123?p=abc`
+  in `location.hash`). All three do not fire and do not latch; the third is the one that fires if
+  the hash is read off a non-`/v2/` page (so it locks change 2's pathname gate). Spread across
+  `teams.microsoft.com` and `gov.teams.microsoft.us`.
 - Launcher with a non-meeting payload [A13]:
   `launcherHref(host, '/_#/l/chat/0/0?users=a', { type: 'chat' })` and
   `/_#/l/channel/19:x@thread.tacv2/General` do not fire and do not latch.
@@ -1305,6 +1310,7 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
 |------|-------|-------|----------|------------|
 | Phase 4 plan | grok-review | 1 | 4 (0 P1, 2 P2, 2 P3) | 4; core verified sound vs real code (regexes match both shapes + reject A12, line refs correct, Dec11/allow-list/launcher-only/throttle/policy hold). Step 0 check 3 (version+XPI edit) moved to hand-checks (broke test-first); webapp whitespace/empty -> malformed block + throttle -> own case block (not the meeting arrays); added misleading-type launcher positive (locks no-type-gate); expectedColon kept for the non-loop cases |
 | Phase 4 plan | grok-review | 2 | 4 (0 P1, 2 P2, 2 P3) | 4; real content.js bugs: hash read on every page would fire on /convene/?url=/_#/meet/ (fix: read hash only on /v2/); marker helper used new URLSearchParams which the Node sandbox lacks (fix: new URL().searchParams); stale "Step 0 check 3" ref in policy subsection; marker check moved after u=new URL(href) (used u before defined) |
+| Phase 4 plan | grok-review | 3 (cap) | 2 (0 P1, 1 P2, 1 P3) | 2; core verified sound again. Added the UNENCODED /convene/?url=/_#/meet/ test form -- the one that actually fires if hash is read off a non-/v2/ page, so it guards round-2's fix (the two listed forms didn't). Corrected change-1 rationale: the ^\/ anchor doesn't make "url= launcher-only" true; change 2's pathname gate does. Cap reached |
 
 ## Phase 0 results
 
