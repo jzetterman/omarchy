@@ -975,6 +975,323 @@ Rollback, if the feature is later pulled: a migration removes the flags entry an
 `.desktop`; the `omarchy-settings` package stops shipping `/etc/zen/policies/policies.json`,
 so pacman removes it on upgrade.
 
+### Phase 4. Every meeting format, every cloud (tests first)
+
+Extends the shipped Phases 1-3 to the `## Extension` contract (Requirements 7-12, A9-A15,
+Decisions 9-12). Minimal diff on the committed base. The settled design does not change: same
+content script, same handler, same `.desktop`, same policy file, same migration. Only the
+matcher, the host set, the emitted host, and the query filter change.
+
+Files:
+
+- `default/chromium/extensions/teams-join/content.js`
+- `default/chromium/extensions/teams-join/manifest.json` (host set, version bump)
+- `bin/omarchy-webapp-handler-teams`
+- `default/firefox/teams-join.xpi` (rebuilt)
+- `test/shell.d/chromium-teams-join-test.sh`
+- `test/shell.d/webapp-handler-teams-test.sh`
+- No change: `etc/zen/policies/policies.json`, `config/chromium-flags.conf`,
+  `migrations/1788809981.sh`, `test/shell.d/teams-join-migration-test.sh`,
+  `test/shell.d/firefox-teams-join-test.sh` (its byte pin and version-bump check do the work
+  unchanged).
+
+#### Step 0. Checks before any test code
+
+Three checks. Each pins a fixture or closes a fork. Record the results under this heading, as
+Phase 1 did.
+
+1. **Live channel-meeting link shape.** The research pinned `/l/meetup-join/<thread>/0?context=`
+   and did not cover channel meetings. Open a channel meeting from Teams (the UAA tenant is
+   enough) and capture the link the browser lands on. Record: the thread suffix (`@thread.tacv2`
+   or `@thread.skype`), the segment after the thread id (a message id, not `0`), and the query
+   keys. Confirm the settled classic regex `l/meetup-join/19(:|%3[aA])[^#\s]+` matches it as-is.
+   Use the captured shape, id redacted, as the channel-meeting fixture in both test files. If the
+   live shape does not start with `19:` or `19%3a`, that is a spec change; stop and surface it.
+2. **Live `/meet/` launcher capture.** Open John's real `/meet/<id>?p=<passcode>` link and copy
+   `location.href` at the launcher page (the Phase 0 method). Record the decoded `url=` value
+   (expect `/_#/meet/<id>?p=...`), the `type` value, and every extra key the launcher adds. This
+   pins the unknown-key fixture to real keys, and records whether `/meet/` commits as a page or
+   302s to the launcher (both paths are covered either way).
+3. **Permission prompt on the widened host set.** Bump `manifest.version`, rebuild the XPI, and
+   install it through the real `force_installed` policy on the Phase 1 Zen profile. Confirm Zen
+   reinstalls with no permissions prompt and `about:addons` lists the new hosts. Confirm Chromium
+   `--load-extension` loads with no prompt. Expected: policy and unpacked installs grant
+   `host_permissions` silently, so the only prompt a user sees is the external-scheme "open
+   msteams?" prompt, per origin, bounded by the host set (Constraints delta). If either browser
+   prompts on the version bump, record it as a documented one-time cost; it is not a design fork.
+
+#### `content.js`
+
+Six changes. Comments update with the code.
+
+1. **One anchored shape regex for both shapes.** Replace the `meetingPath` match (line 5) with a
+   regex anchored at a path start and carrying both alternatives:
+
+   ```
+   /^\/(?:l\/meetup-join\/19(?::|%3[aA])[^#\s]+|meet\/[^\/?#\s]+(?:\?[^#\s]*)?)/
+   ```
+
+   Classic keeps its settled breadth: `[^#\s]+` after `19:`/`19%3a`, no `/0` and no `meeting_`
+   requirement, so channel meetings (`@thread.tacv2`, `@thread.skype`, message id in place of
+   `0`) keep matching. Short is `meet/<id>` with `<id>` = `[^\/?#\s]+` (not digits-only;
+   `user@example.com` matches), then an optional `?query` taken only when it follows the id
+   directly. A `/extra` tail stops the match at the id; the tail and anything after it are not
+   carried. No live link carries a tail (research B), so this is tolerance, not a feature.
+   `/meet/` cannot match inside `/l/meetup-join/` or `/convene/meetings` (no `/` after `meet`).
+
+   The `^\/` anchor is what makes "`url=` is read only on the launcher page" true mechanically: a
+   meeting path sitting raw inside some other page's query (`/convene/meetings?url=/meet/123`)
+   never starts the candidate string, so it never matches. Today's whole-`href` substring scan
+   (line 25) would match it.
+
+2. **Candidate strings instead of a whole-`href` scan.** Replace lines 24-26 with: parse `href`
+   once (`u = new URL(href)`), then
+
+   - on the launcher page only (`u.pathname === "/dl/launcher/launcher.html"`):
+     `v = u.searchParams.get("url") || ""` (one decode layer, as today), and try `meetingPath(v)`
+     then `meetingPath(v.slice(v.indexOf("#") + 1))`. The second form handles the real launcher
+     value `/_#/<path>`; the first handles a bare `/<path>`. No `type` gate (Requirement 9).
+   - on every page, when nothing matched yet: `meetingPath(u.pathname + u.search)` (direct link,
+     `p=`/`context=` in the page query), then `meetingPath(u.hash.slice(1))` (the
+     `/v2/?meetingjoin=true#/...` form).
+
+   Drop the `catch (e) { path = meetingPath(href) }` fallback (line 26): with the anchored regex a
+   full `https://` string never matches, and `location.href` always parses. Keep the `try`.
+
+3. **Allow-list the query.** Replace the `drop` regex (line 11) with a keep set. Same
+   split-and-filter shape, inverted: keep a pair only when `x.split("=")[0]` is exactly `p` or
+   `context`. Everything else goes, including `fqdn`, `type`, `directDl`, `msLaunch`,
+   `enableMobilePage`, and any future launcher key (Requirement 11). Empty kept set: return the
+   path with no `?`, as today.
+
+4. **Emit the clicked host.** Line 27 becomes `"msteams://" + u.hostname + path`. `hostname`, not
+   `host`, so a port can never leak into the scheme URL. No host is hard-coded anywhere in the
+   script after this change (Requirement 10, Decision 11).
+
+5. **Marker as a query key per layer.** Replace the bare `href.indexOf("omarchyWebapp")` (line
+   16) with a helper that takes one already-decoded layer, isolates its query (the text after its
+   first `?`), and returns true when `new URLSearchParams(query).has("omarchyWebapp")`. Run it on
+   three layers: `u.search`, `u.hash`, and the decoded `url=` value (`u.searchParams.get("url")`,
+   read on every page; reading it for the marker can only stand down, which the Security tie-break
+   prefers). A `/meet/` id or `p=` value containing the literal `omarchyWebapp` is path or value
+   text, never a key, so it no longer stands the script down (Security delta, A15 collision case).
+   The encoded launcher form `omarchyWebapp%3D1` still works: `searchParams.get("url")` decodes it
+   to a real `omarchyWebapp=1` pair before the key check (the Phase 0 bug stays fixed).
+
+6. **Latch key unchanged.** Line 32 stays: `"teamsjoin:" + path` with `%3a`/`%40` folded and the
+   query cut at `?`. For `/meet/123?p=abc` that is `teamsjoin:/meet/123`; `p=` never reaches
+   `sessionStorage` (Security). The standalone guard, `window.stop()`, and the fire-or-stand-down
+   latch order stay as they are.
+
+#### `manifest.json`
+
+- `content_scripts[0].matches` and `host_permissions` become the same six entries, in this
+  order: `https://teams.microsoft.com/*`, `https://teams.cloud.microsoft/*`,
+  `https://teams.live.com/*`, `https://gov.teams.microsoft.us/*`,
+  `https://dod.teams.microsoft.us/*`, `https://teams.microsoftonline.cn/*`. Exact `https://`
+  hosts, no `<all_urls>`, no `http://`, no `tabs`, `webNavigation`, or background (Constraints
+  delta). Bare `teams.microsoft.us` is not listed (Requirement 8).
+- `version`: `0.1` to `0.2`. Zen reinstalls only on a version increase; the
+  `firefox-teams-join-test.sh` version-bump check enforces it against `origin/quattro`.
+- The manifest test's `HOSTS` array must list the six in the same order: its `jq` comparison is
+  order-sensitive.
+
+#### `bin/omarchy-webapp-handler-teams`
+
+Lines 5-9 change; nothing else. Put the host and shape alternations in two variables so the two
+`=~` lines stay readable, then use them unquoted:
+
+```
+hosts='teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|gov\.teams\.microsoft\.us|dod\.teams\.microsoft\.us|teams\.microsoftonline\.cn'
+shape='(l/meetup-join/19(:|%3[aA])[^[:space:]]+|meet/[^/?#[:space:]]+[^[:space:]]*)'
+```
+
+- Hosted form: `^msteams:/*($hosts)/$shape$`. `host="${BASH_REMATCH[1]}"` (the full host now;
+  today builds `teams.${BASH_REMATCH[1]}`), `path="${BASH_REMATCH[2]}"`.
+- Host-less v1 form: `^msteams:/*$shape$`. `host="teams.microsoft.com"` stays (A5.1/A11: no cloud
+  to preserve), `path="${BASH_REMATCH[1]}"`.
+- The short alternative requires a non-empty id that does not start with `/`, `?`, or `#`, then
+  tolerates any non-whitespace tail (`?p=`, `#fragment`, or `/extra`). The whitespace guard holds
+  for both shapes: a space, tab, or newline anywhere fails the match and the fallback goes home. A
+  leading dash in a `/meet/` id is harmless: `web_url` always starts with `https://` and is one
+  quoted argv element.
+- Lines 10-14 (native branch) do not change. Every `msteams:` argument still goes to
+  `teams-for-linux` unchanged, unlisted host included (Decision 4, Decision 11, A11). The host
+  check stays fallback-only.
+- Lines 15-35 do not change. `web_url="https://$host/$path"` already preserves the matched host.
+  The throttle id (`${path%%\?*}`, `%%#*`, `%3a`/`%40` folds) already strips `p=`; for
+  `/meet/123?p=abc#/x` the stamp holds `meet/123`. Marker-before-fragment logic is untouched.
+- Update the Design 2 note that says the script "always rebuilds to `teams.microsoft.com`" and
+  that the regex "guards external input, not anything the script emits". The script now emits the
+  clicked host, so the fallback host list guards both.
+
+#### `default/firefox/teams-join.xpi`
+
+Rebuild after `content.js` and `manifest.json` are final, from
+`default/chromium/extensions/teams-join`:
+`python3 -m zipfile -c ../../../firefox/teams-join.xpi manifest.json content.js`. The existing
+byte-pin test fails until this is done; the existing version-bump test fails if `0.2` is
+forgotten. No new test.
+
+#### `etc/zen/policies/policies.json`
+
+No change. Confirmed from the file: the policy force-installs by `gecko.id` (`teams-join@omarchy`)
+from the fixed `install_url`. Host permissions live in the manifest inside the XPI, so the wider
+host set reaches Zen through the rebuilt XPI and the version bump alone. Step 0 check 3 confirms
+the reinstall is silent.
+
+#### Migration and flags
+
+No change. The `--load-extension=` path and the `.desktop` are the same. Chromium re-reads the
+extension directory on start; Zen reinstalls the XPI on the version bump. Users restart their
+browser, as after any Omarchy update.
+
+#### Spec text edits
+
+Apply the "Edits to existing text this implies" list from the Extension section: Requirement 1,
+A5.1, A8, the "three Teams hosts" wording in Constraints and Security, the "up to three" prompt
+bound, the Design 1 and Design 2 rebuild notes, and Requirement 2's "no configuration" scope.
+Remove the old `teams.live.com/meet/<id>` non-goal line. Update the Design 1 code block to the
+final `content.js` and the Design 2 block to the final handler, so the doc stays the source the
+tests were written against.
+
+#### Test matrix
+
+Test-first: write each case, watch it fail on the committed base, then implement. Existing cases
+stay unless listed under "edits".
+
+**`test/shell.d/chromium-teams-join-test.sh`** (manifest assertions plus the `run_node_test`
+sandbox; the sandbox's `URL` already gives `hostname`):
+
+Edits to existing cases:
+- `HOSTS` becomes the six-entry set in manifest order. Pass message drops "three".
+- `hosts` in the Node block becomes the six (five verified plus `.cn`; `.cn` costs nothing here
+  and pins the manifest).
+- `expectedColon`, `expectedEncoded`, `expectedWithContext` become per-host:
+  `msteams://${host}${path}`. `assertFires` description text changes to "rewrites to
+  msteams://<page host>".
+- `assertStandDownAndLatch` hop URL and `encodedMarkerHref` stay on `teams.microsoft.com`; they
+  are guard tests, not host tests.
+
+New cases (A-number in brackets):
+- Per host in the loop [A9, A10, A15]: `/meet/123?p=abc` direct fires to
+  `msteams://${host}/meet/123?p=abc`; `/meet/123` without `p=` fires with no query and no
+  synthesized `p=`; launcher `url=/_#/meet/123?p=abc` with `type=meet`, `deeplinkId`,
+  `launchAgent=join_launcher`, `fqdn=${host}`, and the Step 0 keys fires to
+  `msteams://${host}/meet/123?p=abc`; launcher `url=/_#/l/meetup-join/...?context=...&fqdn=${host}`
+  fires with `context=` only (the `/_#` prefix form is new; today's cases omit it);
+  `/v2/?meetingjoin=true#/meet/123?p=abc` fires (a fragment that carries a meeting is a positive,
+  per the updated Non-goals).
+- Channel meeting, classic, on `teams.microsoft.com` and `gov.teams.microsoft.us` [A10, A15]: the
+  Step 0 fixture (`@thread.tacv2`, message id in place of `0`, `%3a` form) fires and emits the
+  path unchanged.
+- DoD thread id [A10]:
+  `https://dod.teams.microsoft.us/l/meetup-join/19:dod:meeting_abc@thread.v2/0?context=...` emits
+  `msteams://dod.teams.microsoft.us/...`; assert the string does not contain `teams.microsoft.com`.
+- Launcher on gov [A13, A15]: `launcherHref('gov.teams.microsoft.us', '/_#/meet/123?p=abc')` emits
+  `msteams://gov.teams.microsoft.us/meet/123?p=abc`.
+- Non-numeric id [A15]: `/meet/user@example.com?p=abc` fires; latch key is
+  `teamsjoin:/meet/user@example.com`.
+- Launcher without `type` [A13]: same `url=` payload, no `type` key, fires once; `store.size` is 1
+  after the run.
+- Unknown keys dropped [A15, Req 11]: launcher
+  `url=/_#/meet/123?p=abc&futureKey=1&msLaunch=true&directDl=true&enableMobilePage=true&suppressPrompt=true&type=meet`
+  emits exactly `msteams://<host>/meet/123?p=abc`; classic variant with `context=` plus the same
+  keys emits `context=` only. Order test: `futureKey=1&p=abc` still keeps `p=`.
+- `p=` never in the latch key [A14, A15]: after firing `/meet/123?p=abc`, the store keys equal
+  `['teamsjoin:/meet/123']`; a repeat of the same id with a different `p=` in the same store does
+  not fire.
+- Marker collision [A15, Security]: `https://teams.microsoft.com/meet/omarchyWebapp?p=omarchyWebapp`
+  fires and emits that exact path and query; the launcher form of the same payload fires too. Then
+  the real marker still stands down: `/meet/123?p=abc&omarchyWebapp=1` (page query), the launcher
+  form with `omarchyWebapp%3D1` inside `url=`, and `/v2/?meetingjoin=true#/meet/123?omarchyWebapp=1`
+  (fragment query) each stand down and latch.
+- `/convene/` negative, two forms [A13, A15]:
+  `https://<host>/convene/meetings?url=<searchParams-encoded /_#/meet/123?p=abc>` and the raw form
+  `?url=/meet/123?p=abc` (no `/_#`, so the browser keeps it in the query) both do not fire and do
+  not latch. One on `teams.microsoft.com`, one on `gov.teams.microsoft.us`.
+- Launcher with a non-meeting payload [A13]:
+  `launcherHref(host, '/_#/l/chat/0/0?users=a', { type: 'chat' })` and
+  `/_#/l/channel/19:x@thread.tacv2/General` do not fire and do not latch.
+- A12 negatives on one commercial and one gov host: `/v2/?meetingjoin=true#/light-meetings/launch`,
+  `/light-meetings/launch?...`, `/l/meeting/new?subject=x`, and each of `/l/chat/`, `/l/call/`,
+  `/l/channel/`, `/l/team/`, `/l/message/`, `/l/entity/`, `/l/app/`, `/l/task/`, `/l/file/`,
+  `/l/meeting-share/` do not fire and do not latch. Add `https://teams.microsoft.com/meetup-join/19:x`
+  (no `/l/`) and `/meet/` with an empty id as shape negatives.
+
+**`test/shell.d/webapp-handler-teams-test.sh`**:
+
+Edits to existing cases:
+- Move `msteams://teams.microsoft.com/meet/abc123` out of `non_meetings`: it is a meeting now.
+  Replace it with `msteams://teams.microsoft.us/meet/abc123` (bare host, not a web host) and
+  `msteams://gov.teams.microsoft.us.evil.test/meet/abc123` (look-alike on a new host).
+- The comment above the malformed-tail cases (lines 203-206) mentions only `meetup-join`; extend
+  it to both shapes.
+
+New cases, appended to `meeting_urls`/`meeting_https` so both the native-unchanged and the web-app
+loops cover them [A9, A10, A11, A15]:
+- `msteams://<host>/meet/123?p=abc` for each of the six hosts, expecting
+  `https://<host>/meet/123?p=abc&omarchyWebapp=1` (host preserved; assert none of the gov/DoD/cn
+  expectations contain `teams.microsoft.com`).
+- `msteams://<host>/l/meetup-join/19:meeting_abc@thread.v2/0?context=...` for
+  `gov.teams.microsoft.us` and `dod.teams.microsoft.us`, plus the DoD `19:dod:meeting_abc@thread.v2`
+  id.
+- Channel meeting classic on `teams.microsoft.com` (Step 0 fixture), `%3a` form.
+- `msteams://teams.microsoft.com/meet/123` (no `p=`): fallback URL is `.../meet/123?omarchyWebapp=1`,
+  nothing synthesized.
+- `msteams://teams.microsoft.com/meet/user@example.com?p=abc` (non-numeric id).
+- Host-less v1: `msteams:/meet/123?p=abc` and `msteams:///meet/123?p=abc` open on
+  `teams.microsoft.com`.
+- Fragment placement: `msteams://gov.teams.microsoft.us/meet/123?p=abc#/join` opens
+  `https://gov.teams.microsoft.us/meet/123?p=abc&omarchyWebapp=1#/join`;
+  `msteams://teams.live.com/meet/123#/join` opens `...?omarchyWebapp=1#/join`.
+- Tail tolerance: `msteams://teams.microsoft.com/meet/123/extra?p=abc` opens with the tail kept
+  and the marker joined with `&`.
+- Whitespace in a `/meet/` id (space, tab, newline) and `msteams://teams.microsoft.com/meet/`
+  (empty id) go home.
+- Throttle [A14, Security]: `/meet/123?p=abc` twice in-window opens once; after the first open the
+  stamp file's first field equals `meet/123` exactly (no `p=`); the same id with `p=other` inside
+  the window is throttled; `msteams://teams.cloud.microsoft/meet/123?p=abc` after
+  `msteams://teams.microsoft.com/meet/123?p=abc` is throttled (host-independent key, the
+  cross-origin backstop); a classic id and a `/meet/` id in sequence both open (different keys,
+  A14).
+
+**`test/shell.d/firefox-teams-join-test.sh`**: no new cases. The byte pin fails until the XPI is
+rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail, then pass.
+
+**`test/shell.d/teams-join-migration-test.sh`**: no change; run it to confirm nothing regressed.
+
+#### Order of work
+
+1. Step 0 checks; record results and fixtures here.
+2. Handler tests, then handler. `./test/shell.d/webapp-handler-teams-test.sh` green.
+3. Content-script and manifest tests, then `content.js` and `manifest.json`.
+   `./test/shell.d/chromium-teams-join-test.sh` green.
+4. Rebuild the XPI. `./test/shell.d/firefox-teams-join-test.sh` green.
+5. `./test/all` green.
+6. Spec text edits from the list above.
+7. Hand-checks on this machine, both with and without `teams-for-linux`: John's real `/meet/` link
+   opens the meeting in the client, then in a web-app window; a real classic link still works
+   (regression); the leftover calendar tab stays on the launcher page (A1); no loop on the web-app
+   path. Confirm `teams-for-linux` v2.20.0 accepts `msteams://teams.microsoft.com/meet/<id>?p=...`
+   live (the research says `/meet/` support merged in PR #2250; this settles A9 on the native
+   path). No gov or DoD tenant is available; those hosts rest on the unit tests and Decision 9.
+
+#### Decisions assumed
+
+- Decision 11 is resolved: emit `msteams://<host>/<path>`, forward unchanged, fallback on the
+  original host. This plan builds on it.
+- Decisions 9, 10, and 12 are taken at their recommended defaults and are pending John's final
+  confirmation: preserve the cloud (9); `/convene/` stays web and never fires (10);
+  `teams.microsoftonline.cn` is in the host set, best-effort, no acceptance criterion (12). If 12
+  flips to "out", the change is three one-line removals: the manifest entry, the handler `hosts`
+  alternation, and the `.cn` entry in each test's host array. Nothing else depends on it.
+
+#### Review log (extension plan gate)
+
+| Gate | Stage | Round | Findings | Integrated |
+|------|-------|-------|----------|------------|
+
 ## Phase 0 results
 
 Chromium and Zen, 2026-09-06/07. Full detail in the task memory; summary:
