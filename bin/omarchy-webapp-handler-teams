@@ -2,8 +2,8 @@
 # omarchy:summary=Open Teams meetings from browser protocol links
 # omarchy:args=[url]
 url="$1"; path=""
-# Host alternation is unquoted in =~ so the | branches stay regex. Patterns live
-# in variables so a # in the short-shape class cannot start a comment.
+# The pattern variable is unquoted on the right of =~ so its | branches stay regex.
+# Patterns live in variables so a # in the short-shape class cannot start a comment.
 hosts='teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|gov\.teams\.microsoft\.us|dod\.teams\.microsoft\.us|teams\.microsoftonline\.cn'
 hosted_classic="^msteams:/*($hosts)/l/meetup-join/(19(:|%3[aA])[^[:space:]]+)$"
 hosted_short="^msteams:/*($hosts)/meet/([^/?#[:space:]]+)(\?[^#[:space:]]*)?(#[^[:space:]]*)?(/[^[:space:]]*)?$"
