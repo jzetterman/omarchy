@@ -1200,6 +1200,10 @@ New cases (A-number in brackets):
 - Launcher with a MISLEADING `type` on a valid meeting [A13, Requirement 9]:
   `url=/_#/meet/123?p=abc` with `type=chat` (a real meeting, wrong type) still FIRES -- this is
   the case that fails if someone adds a `type` gate, so it locks Requirement 9.
+- Launcher with a non-meeting payload but a MEETING `type` [A13, Requirement 9]:
+  `url=/_#/l/chat/0/0?users=a` with `type=meet` does NOT fire -- the embedded shape decides, so a
+  meeting-looking `type` cannot force a non-meeting path (the complement of the case above;
+  together they lock "shape decides, not type" both ways).
 - Unknown keys dropped [A15, Req 11]: launcher
   `url=/_#/meet/123?p=abc&futureKey=1&msLaunch=true&directDl=true&enableMobilePage=true&suppressPrompt=true&type=meet`
   emits exactly `msteams://<host>/meet/123?p=abc`; classic variant with `context=` plus the same
@@ -1207,6 +1211,11 @@ New cases (A-number in brackets):
 - `p=` never in the latch key [A14, A15]: after firing `/meet/123?p=abc`, the store keys equal
   `['teamsjoin:/meet/123']`; a repeat of the same id with a different `p=` in the same store does
   not fire.
+- Short-shape loop guards [A14]: `/meet/123` with a `matchMedia('(display-mode: standalone)')`
+  stub returning true does NOT fire (standalone stand-down for the short shape, matching the
+  classic case); and `/meet/user@example.com` then `/meet/user%40example.com` in one shared store
+  map to the same latch key `teamsjoin:/meet/user@example.com` (the `%40`/`@` fold applies to
+  `/meet/` ids too, A14), so the second stands down.
 - Marker collision [A15, Security]: `https://teams.microsoft.com/meet/omarchyWebapp?p=omarchyWebapp`
   fires and emits that exact path and query; the launcher form of the same payload fires too. Then
   the real marker still stands down: `/meet/123?p=abc&omarchyWebapp=1` (page query), the launcher
@@ -1311,6 +1320,7 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
 | Phase 4 plan | grok-review | 1 | 4 (0 P1, 2 P2, 2 P3) | 4; core verified sound vs real code (regexes match both shapes + reject A12, line refs correct, Dec11/allow-list/launcher-only/throttle/policy hold). Step 0 check 3 (version+XPI edit) moved to hand-checks (broke test-first); webapp whitespace/empty -> malformed block + throttle -> own case block (not the meeting arrays); added misleading-type launcher positive (locks no-type-gate); expectedColon kept for the non-loop cases |
 | Phase 4 plan | grok-review | 2 | 4 (0 P1, 2 P2, 2 P3) | 4; real content.js bugs: hash read on every page would fire on /convene/?url=/_#/meet/ (fix: read hash only on /v2/); marker helper used new URLSearchParams which the Node sandbox lacks (fix: new URL().searchParams); stale "Step 0 check 3" ref in policy subsection; marker check moved after u=new URL(href) (used u before defined) |
 | Phase 4 plan | grok-review | 3 (cap) | 2 (0 P1, 1 P2, 1 P3) | 2; core verified sound again. Added the UNENCODED /convene/?url=/_#/meet/ test form -- the one that actually fires if hash is read off a non-/v2/ page, so it guards round-2's fix (the two listed forms didn't). Corrected change-1 rationale: the ^\/ anchor doesn't make "url= launcher-only" true; change 2's pathname gate does. Cap reached |
+| Phase 4 plan | codex-review (Sol, gpt-5.6-sol) | 1 | 2 (0 P1, 2 P2) | 2; impl confirmed consistent with source+spec. Both test-gaps: added short-shape loop guards (standalone /meet/ stand-down + %40/@ fold for /meet/ ids in shared latch); added the complement misleading-type negative (non-meeting payload + type=meet does NOT fire) -- with grok's positive, locks "shape decides, not type" both ways |
 
 ## Phase 0 results
 
