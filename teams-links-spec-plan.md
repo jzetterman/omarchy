@@ -1104,18 +1104,26 @@ Lines 5-9 change; nothing else. Put the host and shape alternations in two varia
 
 ```
 hosts='teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|gov\.teams\.microsoft\.us|dod\.teams\.microsoft\.us|teams\.microsoftonline\.cn'
-shape='(l/meetup-join/19(:|%3[aA])[^[:space:]]+|meet/[^/?#[:space:]]+[^[:space:]]*)'
+shape='(l/meetup-join/19(:|%3[aA])[^[:space:]]+|meet/[^/?#[:space:]]+(\?[^/#[:space:]]*)?)'
 ```
 
-- Hosted form: `^msteams:/*($hosts)/$shape$`. `host="${BASH_REMATCH[1]}"` (the full host now;
-  today builds `teams.${BASH_REMATCH[1]}`), `path="${BASH_REMATCH[2]}"`.
-- Host-less v1 form: `^msteams:/*$shape$`. `host="teams.microsoft.com"` stays (A5.1/A11: no cloud
-  to preserve), `path="${BASH_REMATCH[1]}"`.
-- The short alternative requires a non-empty id that does not start with `/`, `?`, or `#`, then
-  tolerates any non-whitespace tail (`?p=`, `#fragment`, or `/extra`). The whitespace guard holds
-  for both shapes: a space, tab, or newline anywhere fails the match and the fallback goes home. A
-  leading dash in a `/meet/` id is harmless: `web_url` always starts with `https://` and is one
-  quoted argv element.
+- Hosted form: `^msteams:/*($hosts)/$shape(/[^[:space:]]*)?$`. `host="${BASH_REMATCH[1]}"` (the
+  full host now; today builds `teams.${BASH_REMATCH[1]}`), `path="${BASH_REMATCH[2]}"`. The
+  trailing `(/[^[:space:]]*)?` tolerates a `/extra` segment after a `/meet/` id so the URL still
+  matches (fires), but the extracted `path` (group 2) excludes it -- Requirement 7's "tail
+  ignored", consistent with the content script.
+- Host-less v1 form: `^msteams:/*$shape(/[^[:space:]]*)?$`. `host="teams.microsoft.com"` stays
+  (A5.1/A11: no cloud to preserve), `path="${BASH_REMATCH[1]}"`.
+- The `/meet/` alternative matches the id (`[^/?#[:space:]]+`, no leading `/`/`?`/`#`) and an
+  optional `?query` DIRECTLY after it; a `/extra` tail is tolerated but dropped from `path`. So
+  `/meet/<id>?p=` keeps `p=` (`path=meet/<id>?p=`), while `/meet/<id>/extra?p=` extracts
+  `meet/<id>` only (the `?p=` sits after `/extra`, so it is not the id's query -- the same result
+  the content script produces). The classic alternative's `[^[:space:]]+` consumes its own query
+  (`/0?context=`), so the trailing group only ever catches a `/meet/` tail. The whitespace guard
+  holds for both shapes: a space, tab, or newline anywhere fails the match and the fallback goes
+  home. A leading dash in a `/meet/` id is harmless: `web_url` starts with `https://` and is one
+  quoted argv element. The added groups shift the higher `BASH_REMATCH` indices; the implementer
+  confirms `path` is still group 2 (hosted) / group 1 (host-less) test-first.
 - Lines 10-14 (native branch) do not change. Every `msteams:` argument still goes to
   `teams-for-linux` unchanged, unlisted host included (Decision 4, Decision 11, A11). The host
   check stays fallback-only.
@@ -1264,8 +1272,12 @@ throttle), which do NOT go in those arrays; their placement is noted inline:
 - Fragment placement: `msteams://gov.teams.microsoft.us/meet/123?p=abc#/join` opens
   `https://gov.teams.microsoft.us/meet/123?p=abc&omarchyWebapp=1#/join`;
   `msteams://teams.live.com/meet/123#/join` opens `...?omarchyWebapp=1#/join`.
-- Tail tolerance: `msteams://teams.microsoft.com/meet/123/extra?p=abc` opens with the tail kept
-  and the marker joined with `&`.
+- Tail dropped [A9, Req 7]: `msteams://teams.microsoft.com/meet/123/extra?p=abc` FIRES but the
+  fallback opens `https://teams.microsoft.com/meet/123?omarchyWebapp=1` -- the `/extra` tail (and
+  the `?p=` sitting after it) are dropped, matching the content script, NOT kept. A clean
+  `msteams://teams.microsoft.com/meet/123?p=abc` keeps `p=`
+  (`https://teams.microsoft.com/meet/123?p=abc&omarchyWebapp=1`). The corresponding content-script
+  case asserts `/meet/123/extra?p=abc` emits `msteams://teams.microsoft.com/meet/123` (same drop).
 - Whitespace in a `/meet/` id (space, tab, newline) and `msteams://teams.microsoft.com/meet/`
   (empty id) go HOME -- add these to the existing malformed-tail block
   (`webapp-handler-teams-test.sh:203-225`), asserting the web-app home page, NOT to
@@ -1321,6 +1333,7 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
 | Phase 4 plan | grok-review | 2 | 4 (0 P1, 2 P2, 2 P3) | 4; real content.js bugs: hash read on every page would fire on /convene/?url=/_#/meet/ (fix: read hash only on /v2/); marker helper used new URLSearchParams which the Node sandbox lacks (fix: new URL().searchParams); stale "Step 0 check 3" ref in policy subsection; marker check moved after u=new URL(href) (used u before defined) |
 | Phase 4 plan | grok-review | 3 (cap) | 2 (0 P1, 1 P2, 1 P3) | 2; core verified sound again. Added the UNENCODED /convene/?url=/_#/meet/ test form -- the one that actually fires if hash is read off a non-/v2/ page, so it guards round-2's fix (the two listed forms didn't). Corrected change-1 rationale: the ^\/ anchor doesn't make "url= launcher-only" true; change 2's pathname gate does. Cap reached |
 | Phase 4 plan | codex-review (Sol, gpt-5.6-sol) | 1 | 2 (0 P1, 2 P2) | 2; impl confirmed consistent with source+spec. Both test-gaps: added short-shape loop guards (standalone /meet/ stand-down + %40/@ fold for /meet/ ids in shared latch); added the complement misleading-type negative (non-meeting payload + type=meet does NOT fire) -- with grok's positive, locks "shape decides, not type" both ways |
+| Phase 4 plan | codex-review (Sol) | 2 | 1 (0 P1, 1 P2) | 1; handler-vs-content-script inconsistency: handler `[^space]*` kept the /meet/ /extra tail while the content script drops it (Req 7 "tail ignored"). Fixed handler shape to `meet/<id>(\?query)?` + trailing `(/[^space]*)?` throwaway group; verified in bash (/meet/123?p= keeps p=, /meet/123/extra?p= -> meet/123, path=group 2); both tests now assert the drop |
 
 ## Phase 0 results
 
