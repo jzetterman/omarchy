@@ -1046,8 +1046,10 @@ Six changes. Comments update with the code.
      then `meetingPath(v.slice(v.indexOf("#") + 1))`. The second form handles the real launcher
      value `/_#/<path>`; the first handles a bare `/<path>`. No `type` gate (Requirement 9).
    - on every page, when nothing matched yet: `meetingPath(u.pathname + u.search)` (direct link,
-     `p=`/`context=` in the page query), then `meetingPath(u.hash.slice(1))` (the
-     `/v2/?meetingjoin=true#/...` form).
+     `p=`/`context=` in the page query). Then read the hash ONLY when `u.pathname === "/v2/"`
+     (the A8 web-client fragment case): `meetingPath(u.hash.slice(1))`. Do NOT read the hash on
+     other pages -- a `/convene/meetings?url=/_#/meet/123` URL lands `/meet/123` in
+     `location.hash`, which would otherwise fire and violate A12/Decision 10 (grok round 2).
 
    Drop the `catch (e) { path = meetingPath(href) }` fallback (line 26): with the anchored regex a
    full `https://` string never matches, and `location.href` always parses. Keep the `try`.
@@ -1062,12 +1064,15 @@ Six changes. Comments update with the code.
    `host`, so a port can never leak into the scheme URL. No host is hard-coded anywhere in the
    script after this change (Requirement 10, Decision 11).
 
-5. **Marker as a query key per layer.** Replace the bare `href.indexOf("omarchyWebapp")` (line
-   16) with a helper that takes one already-decoded layer, isolates its query (the text after its
-   first `?`), and returns true when `new URLSearchParams(query).has("omarchyWebapp")`. Run it on
-   three layers: `u.search`, `u.hash`, and the decoded `url=` value (`u.searchParams.get("url")`,
-   read on every page; reading it for the marker can only stand down, which the Security tie-break
-   prefers). A `/meet/` id or `p=` value containing the literal `omarchyWebapp` is path or value
+5. **Marker as a query key per layer (moved after `new URL`).** Move the marker check to AFTER
+   `u = new URL(href)` (change 2) -- it now needs `u`, so it cannot stay at line 16 before `u`
+   exists. Replace the bare `href.indexOf("omarchyWebapp")` with a helper that takes one
+   already-decoded layer, isolates its query (the text after its first `?`), and returns true when
+   the marker is a KEY there. Parse with the sandbox-available `URL`, NOT `URLSearchParams` (the
+   Node test sandbox injects only `URL`; `new URLSearchParams(...)` throws in every case):
+   `new URL("https://x/?" + query).searchParams.has("omarchyWebapp")`. Run it on three layers:
+   `u.search`, `u.hash`, and the decoded `url=` value (`u.searchParams.get("url")`, read on every
+   page; reading it for the marker can only stand down, which the Security tie-break prefers). A `/meet/` id or `p=` value containing the literal `omarchyWebapp` is path or value
    text, never a key, so it no longer stands the script down (Security delta, A15 collision case).
    The encoded launcher form `omarchyWebapp%3D1` still works: `searchParams.get("url")` decodes it
    to a real `omarchyWebapp=1` pair before the key check (the Phase 0 bug stays fixed).
@@ -1131,8 +1136,8 @@ forgotten. No new test.
 
 No change. Confirmed from the file: the policy force-installs by `gecko.id` (`teams-join@omarchy`)
 from the fixed `install_url`. Host permissions live in the manifest inside the XPI, so the wider
-host set reaches Zen through the rebuilt XPI and the version bump alone. Step 0 check 3 confirms
-the reinstall is silent.
+host set reaches Zen through the rebuilt XPI and the version bump alone. The hand-check (order of
+work step 7) confirms the reinstall is silent.
 
 #### Migration and flags
 
@@ -1299,6 +1304,7 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
 | Gate | Stage | Round | Findings | Integrated |
 |------|-------|-------|----------|------------|
 | Phase 4 plan | grok-review | 1 | 4 (0 P1, 2 P2, 2 P3) | 4; core verified sound vs real code (regexes match both shapes + reject A12, line refs correct, Dec11/allow-list/launcher-only/throttle/policy hold). Step 0 check 3 (version+XPI edit) moved to hand-checks (broke test-first); webapp whitespace/empty -> malformed block + throttle -> own case block (not the meeting arrays); added misleading-type launcher positive (locks no-type-gate); expectedColon kept for the non-loop cases |
+| Phase 4 plan | grok-review | 2 | 4 (0 P1, 2 P2, 2 P3) | 4; real content.js bugs: hash read on every page would fire on /convene/?url=/_#/meet/ (fix: read hash only on /v2/); marker helper used new URLSearchParams which the Node sandbox lacks (fix: new URL().searchParams); stale "Step 0 check 3" ref in policy subsection; marker check moved after u=new URL(href) (used u before defined) |
 
 ## Phase 0 results
 
