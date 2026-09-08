@@ -997,8 +997,10 @@ Files:
 
 #### Step 0. Checks before any test code
 
-Three checks. Each pins a fixture or closes a fork. Record the results under this heading, as
-Phase 1 did.
+Two checks. Each pins a fixture or closes a fork. Record the results under this heading, as
+Phase 1 did. (The widened-host-set silent-reinstall check moves to the hand-checks below: it
+needs the real rebuilt XPI, not a pre-TDD edit of the tree, and a prompt is a one-time cost,
+not a design fork.)
 
 1. **Live channel-meeting link shape.** The research pinned `/l/meetup-join/<thread>/0?context=`
    and did not cover channel meetings. Open a channel meeting from Teams (the UAA tenant is
@@ -1012,14 +1014,6 @@ Phase 1 did.
    (expect `/_#/meet/<id>?p=...`), the `type` value, and every extra key the launcher adds. This
    pins the unknown-key fixture to real keys, and records whether `/meet/` commits as a page or
    302s to the launcher (both paths are covered either way).
-3. **Permission prompt on the widened host set.** Bump `manifest.version`, rebuild the XPI, and
-   install it through the real `force_installed` policy on the Phase 1 Zen profile. Confirm Zen
-   reinstalls with no permissions prompt and `about:addons` lists the new hosts. Confirm Chromium
-   `--load-extension` loads with no prompt. Expected: policy and unpacked installs grant
-   `host_permissions` silently, so the only prompt a user sees is the external-scheme "open
-   msteams?" prompt, per origin, bounded by the host set (Constraints delta). If either browser
-   prompts on the version bump, record it as a documented one-time cost; it is not a design fork.
-
 #### `content.js`
 
 Six changes. Comments update with the code.
@@ -1167,9 +1161,11 @@ Edits to existing cases:
 - `HOSTS` becomes the six-entry set in manifest order. Pass message drops "three".
 - `hosts` in the Node block becomes the six (five verified plus `.cn`; `.cn` costs nothing here
   and pins the manifest).
-- `expectedColon`, `expectedEncoded`, `expectedWithContext` become per-host:
+- `expectedColon`, `expectedEncoded`, `expectedWithContext` become per-host inside the loop:
   `msteams://${host}${path}`. `assertFires` description text changes to "rewrites to
-  msteams://<page host>".
+  msteams://<page host>". Keep a `teams.microsoft.com` value available for the later NON-loop
+  cases that still read them (`chromium-teams-join-test.sh:231` repeat-in-tab, `:247`
+  two-meetings), which the edit list otherwise leaves as microsoft.com.
 - `assertStandDownAndLatch` hop URL and `encodedMarkerHref` stay on `teams.microsoft.com`; they
   are guard tests, not host tests.
 
@@ -1194,6 +1190,9 @@ New cases (A-number in brackets):
   `teamsjoin:/meet/user@example.com`.
 - Launcher without `type` [A13]: same `url=` payload, no `type` key, fires once; `store.size` is 1
   after the run.
+- Launcher with a MISLEADING `type` on a valid meeting [A13, Requirement 9]:
+  `url=/_#/meet/123?p=abc` with `type=chat` (a real meeting, wrong type) still FIRES -- this is
+  the case that fails if someone adds a `type` gate, so it locks Requirement 9.
 - Unknown keys dropped [A15, Req 11]: launcher
   `url=/_#/meet/123?p=abc&futureKey=1&msLaunch=true&directDl=true&enableMobilePage=true&suppressPrompt=true&type=meet`
   emits exactly `msteams://<host>/meet/123?p=abc`; classic variant with `context=` plus the same
@@ -1229,7 +1228,8 @@ Edits to existing cases:
   it to both shapes.
 
 New cases, appended to `meeting_urls`/`meeting_https` so both the native-unchanged and the web-app
-loops cover them [A9, A10, A11, A15]:
+loops cover them [A9, A10, A11, A15] -- EXCEPT the final two bullets (whitespace/empty and
+throttle), which do NOT go in those arrays; their placement is noted inline:
 - `msteams://<host>/meet/123?p=abc` for each of the six hosts, expecting
   `https://<host>/meet/123?p=abc&omarchyWebapp=1` (host preserved; assert none of the gov/DoD/cn
   expectations contain `teams.microsoft.com`).
@@ -1248,8 +1248,11 @@ loops cover them [A9, A10, A11, A15]:
 - Tail tolerance: `msteams://teams.microsoft.com/meet/123/extra?p=abc` opens with the tail kept
   and the marker joined with `&`.
 - Whitespace in a `/meet/` id (space, tab, newline) and `msteams://teams.microsoft.com/meet/`
-  (empty id) go home.
-- Throttle [A14, Security]: `/meet/123?p=abc` twice in-window opens once; after the first open the
+  (empty id) go HOME -- add these to the existing malformed-tail block
+  (`webapp-handler-teams-test.sh:203-225`), asserting the web-app home page, NOT to
+  `meeting_https` (which would wrongly assert a meeting window).
+- Throttle [A14, Security], each in its OWN `begin_case web` block (near `:247`), not
+  `meeting_*` array slots: `/meet/123?p=abc` twice in-window opens once; after the first open the
   stamp file's first field equals `meet/123` exactly (no `p=`); the same id with `p=other` inside
   the window is throttled; `msteams://teams.cloud.microsoft/meet/123?p=abc` after
   `msteams://teams.microsoft.com/meet/123?p=abc` is throttled (host-independent key, the
@@ -1276,6 +1279,10 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
    path. Confirm `teams-for-linux` v2.20.0 accepts `msteams://teams.microsoft.com/meet/<id>?p=...`
    live (the research says `/meet/` support merged in PR #2250; this settles A9 on the native
    path). No gov or DoD tenant is available; those hosts rest on the unit tests and Decision 9.
+   Also confirm the widened host set installs silently: with the rebuilt `0.2` XPI, the real
+   `force_installed` policy reinstalls in Zen with no permissions prompt (`about:addons` lists
+   the new hosts) and Chromium `--load-extension` loads with no prompt. A prompt is a documented
+   one-time cost, not a fork (Constraints delta).
 
 #### Decisions assumed
 
@@ -1291,6 +1298,7 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
 
 | Gate | Stage | Round | Findings | Integrated |
 |------|-------|-------|----------|------------|
+| Phase 4 plan | grok-review | 1 | 4 (0 P1, 2 P2, 2 P3) | 4; core verified sound vs real code (regexes match both shapes + reject A12, line refs correct, Dec11/allow-list/launcher-only/throttle/policy hold). Step 0 check 3 (version+XPI edit) moved to hand-checks (broke test-first); webapp whitespace/empty -> malformed block + throttle -> own case block (not the meeting arrays); added misleading-type launcher positive (locks no-type-gate); expectedColon kept for the non-loop cases |
 
 ## Phase 0 results
 
