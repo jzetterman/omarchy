@@ -1099,31 +1099,37 @@ Six changes. Comments update with the code.
 
 #### `bin/omarchy-webapp-handler-teams`
 
-Lines 5-9 change; nothing else. Put the host and shape alternations in two variables so the two
-`=~` lines stay readable, then use them unquoted:
+Lines 5-9 change; nothing else. The classic and short shapes need different path reconstruction
+(classic keeps its whole tail; short drops a `/extra` path segment but keeps the query and
+fragment), so match them in SEPARATE `=~` branches rather than one combined shape. Host
+alternation in a variable, used unquoted:
 
 ```
 hosts='teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|gov\.teams\.microsoft\.us|dod\.teams\.microsoft\.us|teams\.microsoftonline\.cn'
-shape='(l/meetup-join/19(:|%3[aA])[^[:space:]]+|meet/[^/?#[:space:]]+(\?[^/#[:space:]]*)?)'
 ```
 
-- Hosted form: `^msteams:/*($hosts)/$shape(/[^[:space:]]*)?$`. `host="${BASH_REMATCH[1]}"` (the
-  full host now; today builds `teams.${BASH_REMATCH[1]}`), `path="${BASH_REMATCH[2]}"`. The
-  trailing `(/[^[:space:]]*)?` tolerates a `/extra` segment after a `/meet/` id so the URL still
-  matches (fires), but the extracted `path` (group 2) excludes it -- Requirement 7's "tail
-  ignored", consistent with the content script.
-- Host-less v1 form: `^msteams:/*$shape(/[^[:space:]]*)?$`. `host="teams.microsoft.com"` stays
-  (A5.1/A11: no cloud to preserve), `path="${BASH_REMATCH[1]}"`.
-- The `/meet/` alternative matches the id (`[^/?#[:space:]]+`, no leading `/`/`?`/`#`) and an
-  optional `?query` DIRECTLY after it; a `/extra` tail is tolerated but dropped from `path`. So
-  `/meet/<id>?p=` keeps `p=` (`path=meet/<id>?p=`), while `/meet/<id>/extra?p=` extracts
-  `meet/<id>` only (the `?p=` sits after `/extra`, so it is not the id's query -- the same result
-  the content script produces). The classic alternative's `[^[:space:]]+` consumes its own query
-  (`/0?context=`), so the trailing group only ever catches a `/meet/` tail. The whitespace guard
-  holds for both shapes: a space, tab, or newline anywhere fails the match and the fallback goes
-  home. A leading dash in a `/meet/` id is harmless: `web_url` starts with `https://` and is one
-  quoted argv element. The added groups shift the higher `BASH_REMATCH` indices; the implementer
-  confirms `path` is still group 2 (hosted) / group 1 (host-less) test-first.
+Four branches (hosted + host-less, each classic + short); all verified in bash:
+
+- **Hosted classic:** `^msteams:/*($hosts)/l/meetup-join/(19(:|%3[aA])[^[:space:]]+)$` ->
+  `host=${BASH_REMATCH[1]}`, `path="l/meetup-join/${BASH_REMATCH[2]}"`. The `[^[:space:]]+` keeps
+  the whole `/0?context=...#frag` tail, as today. `host` is the full host now (today builds
+  `teams.${BASH_REMATCH[1]}`).
+- **Hosted short:**
+  `^msteams:/*($hosts)/meet/([^/?#[:space:]]+)(\?[^#[:space:]]*)?(#[^[:space:]]*)?(/[^[:space:]]*)?$`
+  -> `host=${BASH_REMATCH[1]}`, `path="meet/${BASH_REMATCH[2]}${BASH_REMATCH[3]}${BASH_REMATCH[4]}"`.
+  That is: id (group 2), an optional `?query` DIRECTLY after it (group 3, kept, slashes and all),
+  an optional `#fragment` (group 4, kept), and a trailing `/extra` (group 5, DROPPED). This
+  matches the content script exactly: `/meet/123?p=a/b` keeps `p=a/b`; `/meet/123?p=abc#/join`
+  keeps the fragment; `/meet/123/extra?p=abc` yields `meet/123` (the `?p=` after `/extra` is not
+  the id's query, so it is dropped -- the same result the content-script prefix match produces).
+- **Host-less v1:** the same two regexes without the `($hosts)/` prefix, with
+  `host="teams.microsoft.com"` (A5.1/A11: no cloud to preserve) and `path` built from the
+  now-shifted group indices (classic: `l/meetup-join/${BASH_REMATCH[1]}`; short: id/query/frag are
+  groups 1/2/3).
+- The whitespace guard holds for both shapes (a space/tab/newline fails `$`, fallback goes home);
+  a leading dash in a `/meet/` id is harmless (`web_url` starts `https://`, one quoted argv
+  element). Bare `teams.microsoft.us` and `gov.teams.microsoft.us.evil.test` do not match the host
+  alternation, so they go home (look-alike rule).
 - Lines 10-14 (native branch) do not change. Every `msteams:` argument still goes to
   `teams-for-linux` unchanged, unlisted host included (Decision 4, Decision 11, A11). The host
   check stays fallback-only.
@@ -1272,6 +1278,10 @@ throttle), which do NOT go in those arrays; their placement is noted inline:
 - Fragment placement: `msteams://gov.teams.microsoft.us/meet/123?p=abc#/join` opens
   `https://gov.teams.microsoft.us/meet/123?p=abc&omarchyWebapp=1#/join`;
   `msteams://teams.live.com/meet/123#/join` opens `...?omarchyWebapp=1#/join`.
+- Slash in the passcode [A9, A11]: `msteams://teams.microsoft.com/meet/123?p=a/b` opens
+  `https://teams.microsoft.com/meet/123?p=a/b&omarchyWebapp=1` -- the `/` in the passcode is
+  kept, not truncated (the short-form query stops only at `#`/whitespace, like the content
+  matcher). The content-script side asserts the same emit.
 - Tail dropped [A9, Req 7]: `msteams://teams.microsoft.com/meet/123/extra?p=abc` FIRES but the
   fallback opens `https://teams.microsoft.com/meet/123?omarchyWebapp=1` -- the `/extra` tail (and
   the `?p=` sitting after it) are dropped, matching the content script, NOT kept. A clean
@@ -1334,6 +1344,7 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
 | Phase 4 plan | grok-review | 3 (cap) | 2 (0 P1, 1 P2, 1 P3) | 2; core verified sound again. Added the UNENCODED /convene/?url=/_#/meet/ test form -- the one that actually fires if hash is read off a non-/v2/ page, so it guards round-2's fix (the two listed forms didn't). Corrected change-1 rationale: the ^\/ anchor doesn't make "url= launcher-only" true; change 2's pathname gate does. Cap reached |
 | Phase 4 plan | codex-review (Sol, gpt-5.6-sol) | 1 | 2 (0 P1, 2 P2) | 2; impl confirmed consistent with source+spec. Both test-gaps: added short-shape loop guards (standalone /meet/ stand-down + %40/@ fold for /meet/ ids in shared latch); added the complement misleading-type negative (non-meeting payload + type=meet does NOT fire) -- with grok's positive, locks "shape decides, not type" both ways |
 | Phase 4 plan | codex-review (Sol) | 2 | 1 (0 P1, 1 P2) | 1; handler-vs-content-script inconsistency: handler `[^space]*` kept the /meet/ /extra tail while the content script drops it (Req 7 "tail ignored"). Fixed handler shape to `meet/<id>(\?query)?` + trailing `(/[^space]*)?` throwaway group; verified in bash (/meet/123?p= keeps p=, /meet/123/extra?p= -> meet/123, path=group 2); both tests now assert the drop |
+| Phase 4 plan | codex-review (Sol) | 3 (cap) | 1 (0 P1, 1 P2) | 1; round-2's regex was too tight: `[^/#space]*` truncated a passcode at `/` (p=a/b) and no suffix allowed a #fragment (fragment tests would fall home, violating A9/A11). Rewrote the handler as two branches (classic keeps its tail; short = `meet/(id)(\?[^#space]*)?(#[^space]*)?(/[^space]*)?` -> path=id+query+frag, drop /extra). Verified in bash: p=a/b kept, #/join kept, /meet/123/extra?p= -> meet/123 (matches content script). Added slash-in-passcode test. Cap reached |
 
 ## Phase 0 results
 
