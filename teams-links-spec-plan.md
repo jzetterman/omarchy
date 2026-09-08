@@ -1012,6 +1012,18 @@ not a design fork.)
    no channel meeting can be captured on the day, fall back to the documented form
    `19:<id>@thread.tacv2/<messageId>?context=` (verified to match both the content and handler
    regexes) and mark the fixture unverified.
+
+   **Step 0 check 1 result (2026-09-08, John-captured HAR on `teams.cloud.microsoft`): PASS.** A
+   real channel meeting join link is
+   `l/meetup-join/19:<id>@thread.tacv2/<messageId>?context=...` -- `@thread.tacv2`, a 13-digit
+   message id (`1788865197722`) where the calendar form has `/0`. Both matchers accept it,
+   verified: the content regex matches, and the handler classic branch extracts
+   `host=teams.cloud.microsoft`, `path=l/meetup-join/19:<id>@thread.tacv2/<messageId>?context=`.
+   This confirms the loosened Req 7 classic shape (no `/0`/`meeting_` requirement) catches channel
+   meetings. Use this shape (id redacted) as the channel-meeting fixture. Bonus real NEGATIVE
+   fixture from the same HAR: a channel MESSAGE link `l/message/19:<id>@thread.tacv2/<msgId>?...`
+   with launcher `type=message` -- our shapes do not match it (not `meetup-join`/`meet`), so it
+   does not fire (A12). Also confirms `teams.cloud.microsoft` is a live host in the set.
 2. **Live `/meet/` launcher capture.** Open John's real `/meet/<id>?p=<passcode>` link and copy
    `location.href` at the launcher page (the Phase 0 method). Record the decoded `url=` value
    (expect `/_#/meet/<id>?p=...`), the `type` value, and every extra key the launcher adds. This
