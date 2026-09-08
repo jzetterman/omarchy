@@ -1008,7 +1008,10 @@ not a design fork.)
    or `@thread.skype`), the segment after the thread id (a message id, not `0`), and the query
    keys. Confirm the settled classic regex `l/meetup-join/19(:|%3[aA])[^#\s]+` matches it as-is.
    Use the captured shape, id redacted, as the channel-meeting fixture in both test files. If the
-   live shape does not start with `19:` or `19%3a`, that is a spec change; stop and surface it.
+   live shape does not start with `19:` or `19%3a`, that is a spec change; stop and surface it. If
+   no channel meeting can be captured on the day, fall back to the documented form
+   `19:<id>@thread.tacv2/<messageId>?context=` (verified to match both the content and handler
+   regexes) and mark the fixture unverified.
 2. **Live `/meet/` launcher capture.** Open John's real `/meet/<id>?p=<passcode>` link and copy
    `location.href` at the launcher page (the Phase 0 method). Record the decoded `url=` value
    (expect `/_#/meet/<id>?p=...`), the `type` value, and every extra key the launcher adds. This
@@ -1048,8 +1051,9 @@ Six changes. Comments update with the code.
      then `meetingPath(v.slice(v.indexOf("#") + 1))`. The second form handles the real launcher
      value `/_#/<path>`; the first handles a bare `/<path>`. No `type` gate (Requirement 9).
    - on every page, when nothing matched yet: `meetingPath(u.pathname + u.search)` (direct link,
-     `p=`/`context=` in the page query). Then read the hash ONLY when `u.pathname === "/v2/"`
-     (the A8 web-client fragment case): `meetingPath(u.hash.slice(1))`. Do NOT read the hash on
+     `p=`/`context=` in the page query). Then read the hash ONLY when `u.pathname` is `/v2/` (or
+     the slash-less `/v2`, since `new URL` can drop the trailing slash) -- the A8 web-client
+     fragment case: `meetingPath(u.hash.slice(1))`. Do NOT read the hash on
      other pages -- a `/convene/meetings?url=/_#/meet/123` URL lands `/meet/123` in
      `location.hash`, which would otherwise fire and violate A12/Decision 10 (grok round 2).
 
@@ -1092,8 +1096,13 @@ Six changes. Comments update with the code.
   `https://dod.teams.microsoft.us/*`, `https://teams.microsoftonline.cn/*`. Exact `https://`
   hosts, no `<all_urls>`, no `http://`, no `tabs`, `webNavigation`, or background (Constraints
   delta). Bare `teams.microsoft.us` is not listed (Requirement 8).
-- `version`: `0.1` to `0.2`. Zen reinstalls only on a version increase; the
-  `firefox-teams-join-test.sh` version-bump check enforces it against `origin/quattro`.
+- `version`: `0.1` to `0.2`. Zen reinstalls only on a version increase, so the bump is
+  load-bearing (without it Zen keeps the old 3-host `0.1` XPI forever). On THIS branch the
+  `firefox-teams-join-test.sh` version-bump check does NOT fire -- it early-exits on "no base
+  manifest on `origin/quattro`" (the extension does not yet exist there; verified) -- so it does
+  not gate the bump here. Add an explicit `.version == "0.2"` assertion to the manifest `jq`
+  block in `chromium-teams-join-test.sh` (which does run) as the real gate. Post-merge, the
+  firefox version-bump check enforces it against the base.
 - The manifest test's `HOSTS` array must list the six in the same order: its `jq` comparison is
   order-sensitive.
 
@@ -1145,8 +1154,9 @@ Four branches (hosted + host-less, each classic + short); all verified in bash:
 Rebuild after `content.js` and `manifest.json` are final, from
 `default/chromium/extensions/teams-join`:
 `python3 -m zipfile -c ../../../firefox/teams-join.xpi manifest.json content.js`. The existing
-byte-pin test fails until this is done; the existing version-bump test fails if `0.2` is
-forgotten. No new test.
+byte-pin test fails until this is done. The firefox version-bump check does NOT catch a forgotten
+`0.2` on this branch (new-extension early exit); the `.version == "0.2"` assertion added to
+`chromium-teams-join-test.sh` is what gates it here. No new firefox test.
 
 #### `etc/zen/policies/policies.json`
 
@@ -1179,9 +1189,13 @@ stay unless listed under "edits".
 sandbox; the sandbox's `URL` already gives `hostname`):
 
 Edits to existing cases:
-- `HOSTS` becomes the six-entry set in manifest order. Pass message drops "three".
-- `hosts` in the Node block becomes the six (five verified plus `.cn`; `.cn` costs nothing here
-  and pins the manifest).
+- `HOSTS` becomes the six-entry set in manifest order. Pass message drops "three". Add a
+  `.version == "0.2"` assertion to the same `jq`/manifest block -- this is the gate that actually
+  enforces the version bump on this branch (the firefox version-bump check no-ops pre-merge; see
+  the `manifest.json` note).
+- `hosts` in the Node block becomes the six (five verified plus `.cn`), which exercises the emit
+  on every listed host; `.cn` costs nothing here since the script has no host logic. The
+  `HOSTS`/`jq` block, not this array, is what pins the manifest.
 - `expectedColon`, `expectedEncoded`, `expectedWithContext` become per-host inside the loop:
   `msteams://${host}${path}`. `assertFires` description text changes to "rewrites to
   msteams://<page host>". Keep a `teams.microsoft.com` value available for the later NON-loop
@@ -1301,17 +1315,20 @@ throttle), which do NOT go in those arrays; their placement is noted inline:
   A14).
 
 **`test/shell.d/firefox-teams-join-test.sh`**: no new cases. The byte pin fails until the XPI is
-rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail, then pass.
+rebuilt (run it to see it fail, then pass). Its version-bump check no-ops on this branch (the
+extension is not on `origin/quattro` yet), so the version bump is gated by the `.version` check
+added to `chromium-teams-join-test.sh`, not here.
 
 **`test/shell.d/teams-join-migration-test.sh`**: no change; run it to confirm nothing regressed.
 
 #### Order of work
 
 1. Step 0 checks; record results and fixtures here.
-2. Handler tests, then handler. `./test/shell.d/webapp-handler-teams-test.sh` green.
+2. Handler tests, then handler. `bash test/shell.d/webapp-handler-teams-test.sh` green (the test
+   files are mode 644; run them with `bash`, not `./`).
 3. Content-script and manifest tests, then `content.js` and `manifest.json`.
-   `./test/shell.d/chromium-teams-join-test.sh` green.
-4. Rebuild the XPI. `./test/shell.d/firefox-teams-join-test.sh` green.
+   `bash test/shell.d/chromium-teams-join-test.sh` green.
+4. Rebuild the XPI. `bash test/shell.d/firefox-teams-join-test.sh` green.
 5. `./test/all` green.
 6. Spec text edits from the list above.
 7. Hand-checks on this machine, both with and without `teams-for-linux`: John's real `/meet/` link
@@ -1345,6 +1362,7 @@ rebuilt; the version-bump check fails until `0.2` lands. Run it to see both fail
 | Phase 4 plan | codex-review (Sol, gpt-5.6-sol) | 1 | 2 (0 P1, 2 P2) | 2; impl confirmed consistent with source+spec. Both test-gaps: added short-shape loop guards (standalone /meet/ stand-down + %40/@ fold for /meet/ ids in shared latch); added the complement misleading-type negative (non-meeting payload + type=meet does NOT fire) -- with grok's positive, locks "shape decides, not type" both ways |
 | Phase 4 plan | codex-review (Sol) | 2 | 1 (0 P1, 1 P2) | 1; handler-vs-content-script inconsistency: handler `[^space]*` kept the /meet/ /extra tail while the content script drops it (Req 7 "tail ignored"). Fixed handler shape to `meet/<id>(\?query)?` + trailing `(/[^space]*)?` throwaway group; verified in bash (/meet/123?p= keeps p=, /meet/123/extra?p= -> meet/123, path=group 2); both tests now assert the drop |
 | Phase 4 plan | codex-review (Sol) | 3 (cap) | 1 (0 P1, 1 P2) | 1; round-2's regex was too tight: `[^/#space]*` truncated a passcode at `/` (p=a/b) and no suffix allowed a #fragment (fragment tests would fall home, violating A9/A11). Rewrote the handler as two branches (classic keeps its tail; short = `meet/(id)(\?[^#space]*)?(#[^space]*)?(/[^space]*)?` -> path=id+query+frag, drop /extra). Verified in bash: p=a/b kept, #/join kept, /meet/123/extra?p= -> meet/123 (matches content script). Added slash-in-passcode test. Cap reached |
+| Phase 4 plan | claude-review (fable-5, single) | 1 | 5 (1 major, 4 nit) | 5; MAJOR: the firefox version-bump check NO-OPS on this branch (extension not on origin/quattro -> new-extension early exit), so a forgotten 0.2 bump would ship green and Zen would keep the old 3-host 0.1 XPI. Added an explicit .version=="0.2" assertion to the chromium manifest test + corrected 3 false claims. Nits: order-of-work uses bash not ./ (files are 644); /v2 slash-less pathname guard; hosts-Node rationale; Step 0 channel-meeting fallback fixture. fable independently RAN 23 content-regex inputs + the 4 handler branches + the marker helper in the Node sandbox -- all sound; every Req 7-12 + A9-A15 has a code change and a test. Plan gate COMPLETE |
 
 ## Phase 0 results
 
