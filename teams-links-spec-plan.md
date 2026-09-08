@@ -493,37 +493,47 @@ A meeting link must open in the client whatever its shape and whatever its cloud
 ### Requirements (continues the list above)
 
 7. **Two meeting shapes.** The extension and the handler recognise both:
-   - Classic: `l/meetup-join/<threadId>/0`, with optional `?context=<json>`. `<threadId>` is
-     `19:meeting_<id>@thread.v2` or `19:dod:meeting_<id>@thread.v2`. `:` and `@` may arrive
-     as `%3a` and `%40`.
+   - Classic: the settled Design 1 shape `l/meetup-join/19(:|%3a)<tail>` -- any non-whitespace
+     tail, NO `/0` or `meeting_` requirement, matching the current handler and content script.
+     `<tail>` commonly carries `19:meeting_<id>@thread.v2` (or `19:dod:meeting_<id>@thread.v2`)
+     then `/0?context=`, but ALSO channel-meeting forms (`19:<id>@thread.tacv2`, legacy
+     `@thread.skype`) with a message id in place of `0`. Those are examples, not bounds. `:`
+     and `@` may arrive as `%3a`/`%40`. (Verify a live channel-meeting link during
+     implementation; the research pinned `/0` and did not cover channel meetings.)
    - Short: `meet/<meetingId>`, with optional `?p=<passcode>`. `<meetingId>` is any run of
      characters that is not `/`, `?`, `#`, or whitespace. It is NOT digits-only: Microsoft's
-     own tests accept `meet/user@example.com`. `p` may be absent (consumer links).
+     own tests accept `meet/user@example.com`. `p` may be absent (consumer links). A trailing
+     `/extra` after the id matches on the id (the tail is ignored, as the classic shape
+     tolerates a tail).
 8. **Five hosts, one best-effort.** Both shapes are recognised on `teams.microsoft.com`,
    `teams.cloud.microsoft`, `teams.live.com`, `gov.teams.microsoft.us`, and
    `dod.teams.microsoft.us`. `teams.microsoftonline.cn` (21Vianet) is included best-effort
    and flagged unverified (Decision 12). Bare `teams.microsoft.us` is not a web host and is
    not matched.
-9. **Launcher intermediary.** On `/dl/launcher/launcher.html`, the meeting is taken from the
-   `url=` parameter after one decode and after stripping the leading `/_#`. The script fires
-   once on the extracted meeting, not on the launcher URL itself. `type=meet` and
-   `type=meetup-join` are the only launcher types that are meetings.
+9. **Launcher intermediary.** The `url=` parameter is a meeting source ONLY on the launcher
+   page `/dl/launcher/launcher.html`. There, decode `url=` and match the meeting shape
+   (Requirement 7) inside it; the shape decides. There is NO separate `type` gate -- a
+   non-meeting `url=` payload fails the shape check, and the launcher's `type` may be absent
+   (so a `type` gate would silently break a real join). The script fires once on the extracted
+   meeting, not on the launcher URL itself. Because `url=` is read only on the launcher page,
+   `/convene/meetings?url=<meeting>` (a different page) is never a source.
 10. **Preserve the cloud in what Omarchy emits.** The emitted `msteams:` URL names the host
     the user clicked, and the web-app fallback opens `https://<original-host>/<path>`. Omarchy
     never rewrites a gov, DoD, consumer, or `cloud.microsoft` host to `teams.microsoft.com`.
     What `teams-for-linux` then does with a gov/DoD host is its own concern (Decision 9): the
     guarantee covers what Omarchy emits and what the fallback opens, not the client's routing.
-11. **Query handling -- allow-list contract.** The emitted URL keeps ONLY the meeting's own
-    `p=` and `context=`; every other query parameter is dropped, so an unknown future launcher
-    key is dropped by default. This exact kept-set is the contract, and the tests include an
-    unknown-key case (A15). It matches Design 1's observed output on real inputs: a classic
-    launcher URL carries only `context=` once the launcher's `anon`, `deeplinkId`, `launchAgent`,
-    `enablemcas`, `suppressPrompt` and routing keys (`type`, `directDl`, `msLaunch`,
-    `enableMobilePage`, `fqdn`) are gone. The Plan must achieve "only `p=` and `context=`
-    survive" -- an allow-list filter is the direct way; extending Design 1's drop-list qualifies
-    only if it provably covers every key the launcher can add. (This resolves the earlier
-    blacklist framing: because the contract is exact, allow-list semantics are required.) The
-    host carries the cloud, so `fqdn` is dropped and not needed in the emitted URL.
+11. **Query handling -- allow-list contract (content script).** The URL the CONTENT SCRIPT
+    emits keeps ONLY the meeting's own `p=` and `context=`; every other query parameter is
+    dropped, so an unknown future launcher key is dropped by default. This exact kept-set is the
+    contract, and the tests include an unknown-key case (A15). It matches Design 1's observed
+    output on real inputs: a classic launcher URL carries only `context=` once the launcher's
+    `anon`, `deeplinkId`, `launchAgent`, `enablemcas`, `suppressPrompt` and routing keys
+    (`type`, `directDl`, `msLaunch`, `enableMobilePage`, `fqdn`) are gone. The Plan achieves
+    "only `p=` and `context=` survive" with an allow-list filter (extending Design 1's drop-list
+    qualifies only if it provably covers every key the launcher can add). This is the content
+    script's job; the handler does NOT add a second allow-list -- it passes an external
+    `msteams:` (e.g. from Outlook, with extra keys) through to `teams-for-linux` unchanged
+    (Decision 4). The host carries the cloud, so `fqdn` is dropped and not needed.
 12. **Both shapes reach both targets.** With `teams-for-linux` installed, both shapes reach it
     unchanged (Decision 4 stands, subject to Decision 11). Without it, both shapes open a
     web-app window on the original host with the `omarchyWebapp=1` marker, under the same
@@ -533,7 +543,6 @@ Edits to existing text this implies (the Plan applies them):
 
 - Requirement 1: the shape and host list become "either shape in Requirement 7 on any host
   in Requirement 8".
-- Requirement 5: `/meet/<id>` removed from the non-meeting examples. It is a meeting now.
 - A5.1: "a recognised meeting URL" means either shape (Requirement 7) with a listed host
   (Requirement 8) OR in the host-less v1 form `msteams:/<path>` that settled Design 2 already
   accepts; the host-less web-app fallback keeps today's default host `teams.microsoft.com`.
@@ -559,7 +568,8 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   or `/meet/` path is a meeting under settled A8 and Design 1 and fires on first contact -- the
   per-meeting latch only blocks the REPEAT after the launcher hop, it does not create that
   first fire. So the non-goal is "a `/v2/` URL with no recognised meeting path", not "every
-  `/v2/` URL".
+  `/v2/` URL". (This narrows research item E, which lists all `/v2/` as non-firing; the
+  fragment-carries-meeting case is a deliberate, A8-consistent deviation from the research.)
 - Town hall and broadcast attendee pages, `/convene/meetings?url=...`. Microsoft routes them
   to the web. They stay web (Decision 10).
 - The scheduling dialog `/l/meeting/new`. It creates a meeting; it is not a join.
@@ -593,8 +603,8 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   client's cloud follows the user's `teams-for-linux` config on gov/DoD (Decision 9).
 - A11. For each of the five verified hosts in Requirement 8, the web-app fallback opens
   `https://<original-host>/<path>` plus the `omarchyWebapp=1` marker, for both shapes. The
-  handler accepts an `msteams:` URL that names any listed host (21Vianet included, as
-  membership) and the host-less v1 form `msteams:/<path>` settled Design 2 already takes (its
+  handler accepts an `msteams:` URL that names any listed host (the Requirement 8 set as
+  Decision 12 settles it) and the host-less v1 form `msteams:/<path>` settled Design 2 already takes (its
   web-app fallback uses the default host `teams.microsoft.com`). On the WEB-APP FALLBACK path
   (no `teams-for-linux`), a host outside the list lands on the Teams home page (the look-alike
   rule in Security). This host validation is fallback-only: with `teams-for-linux` installed,
@@ -605,40 +615,42 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
   fires per A8 -- it is not a negative), `/light-meetings/launch`, `/convene/meetings`,
   `/l/meeting/new`, and every non-meeting `/l/<type>/` in the Non-goals list. Tested on at least
   one commercial host and one gov host.
-- A13. A launcher intermediary URL (`/dl/launcher/launcher.html?url=...&type=meet` and
-  `...&type=meetup-join`) fires exactly once, on the meeting extracted from `url=`, with the
-  launcher parameters in Requirement 11 dropped and `p=` or `context=` kept. A launcher URL
-  whose `type` is not `meet` or `meetup-join` does not fire.
+- A13. A launcher URL `/dl/launcher/launcher.html?url=<encoded meeting>` fires exactly once,
+  on the meeting extracted from `url=` (whatever the `type`, or none), with the launcher
+  parameters dropped and `p=`/`context=` kept. A launcher `url=` carrying a NON-meeting path
+  (chat/channel/call) does not fire -- the shape check excludes it, not a type gate. `url=` on
+  any page other than the launcher (e.g. `/convene/meetings?url=<meeting>`) is not read, so it
+  does not fire.
 - A14. The loop guard holds for the new shapes and hosts. The `omarchyWebapp` marker, the
   standalone guard, the per-meeting latch, and the ~20s throttle each treat a `/meet/`
   meeting the way they treat a classic one. A `/meet/` id and a classic thread id for the
   same meeting are different keys; unifying them is not required. Two encodings of one id --
   classic or short (a `/meet/` id can contain `@`, folded from `%40`) -- still map to one key
-  on every host. Throttle identity is cloud-aware: it stays host-independent WITHIN a cloud so
-  the `teams.microsoft.com` -> `teams.cloud.microsoft` cross-origin hop for one meeting still
-  collapses to one launch (those two are the same commercial cloud), but the SAME `/meet/` id
-  on distinct clouds (`teams.live.com`, `gov.`, `dod.`, `.cn`) is a different meeting and both
-  must fire -- so the throttle key is the normalized id plus its cloud class, with
-  `{teams.microsoft.com, teams.cloud.microsoft}` the one shared class. A test opens the same id
-  on a commercial and a gov host within the window and asserts both fire.
-- A15. `./test/all` covers each of the five verified hosts for both shapes, the A12 negative
-  shapes plus A13's non-`meet`/`meetup-join` launcher case, and the launcher intermediary for
-  both meeting types -- with at least one launcher-intermediary case on a gov/DoD host that
-  asserts the emitted `msteams:` host and the web-app fallback host stay on that cloud (so
-  launcher extraction cannot be hard-coded to `teams.microsoft.com`). At least one `/meet/`
-  case uses a non-numeric id (e.g. `user@example.com`, per Requirement 7), so a digits-only
-  short matcher fails. A `/meet/` case
-  with `p=` asserts the passcode arrives unchanged and never lands in the throttle stamp or the
-  latch key; a `/meet/` case without `p=` asserts it still fires and none is synthesized (the
-  A9 and Security rules). An unknown extra query key (not `p=`/`context=`) is dropped from the
-  emitted URL (Requirement 11 allow-list). The `/convene/` and wrong-`type`-launcher negatives
-  each carry a VALID embedded `/meet/` or `/l/meetup-join/` payload in `url=`, so the test
-  proves the exclusion holds even when a real meeting is present (the extractor must skip
-  `/convene/` and honour the launcher `type` gate). A meeting whose `/meet/` id or passcode
-  contains the literal `omarchyWebapp` token still fires (the marker-scoping rule in Security).
-  The manifest test asserts the `content_scripts.matches` and `host_permissions` sets equal the
-  Requirement 8 host set exactly (21Vianet included, since that is host membership), still
-  `https://` only, still no `<all_urls>`.
+  on every host. The throttle keeps its settled host-independent key (id only), which is what
+  catches the `teams.microsoft.com` -> `teams.cloud.microsoft` cross-origin hop for one meeting.
+  The theoretical collision -- the same `/meet/` id issued by two different clouds and both
+  clicked within ~20s -- is accepted: meeting ids are per-cloud generated, so it does not arise
+  in practice, and adding a cloud class to the key would cost that cross-origin backstop. (grok
+  and Sol split on this; keeping the settled key is the simpler correct call.)
+- A15. `./test/all` covers each of the five verified hosts for both shapes, the A12 negatives,
+  and the launcher intermediary firing on a valid embedded meeting -- with at least one launcher
+  case on a gov/DoD host asserting the emitted `msteams:` host and the web-app fallback host
+  stay on that cloud (so launcher extraction cannot be hard-coded to `teams.microsoft.com`). At
+  least one classic case is a CHANNEL meeting (`@thread.tacv2`, a message id in place of `0`,
+  per Requirement 7), so the matcher is not narrowed to `meeting_...@thread.v2/0`. At least one
+  `/meet/` case uses a non-numeric id (e.g. `user@example.com`), so a digits-only short matcher
+  fails. A `/meet/` case with `p=` asserts the passcode arrives unchanged and never lands in the
+  throttle stamp or the latch key; a `/meet/` case without `p=` asserts it still fires and none
+  is synthesized (A9 and Security). An unknown extra query key (not `p=`/`context=`) is dropped
+  from the emitted URL (Requirement 11). Two exclusion negatives prove the launcher mechanism,
+  each carrying a VALID embedded `/meet/` or `/l/meetup-join/` payload: a
+  `/convene/meetings?url=<meeting>` case (proves `url=` is read only on the launcher page, not
+  `/convene/`), and a launcher `url=` carrying a NON-meeting path (proves the shape check, not a
+  `type` gate, excludes it). A meeting whose `/meet/` id or passcode contains the literal
+  `omarchyWebapp` token still fires (marker-scoping in Security). The manifest test asserts the
+  `content_scripts.matches` and `host_permissions` sets equal the Requirement 8 host set as
+  Decision 12 settles it (21Vianet in or out per that decision), still `https://` only, still no
+  `<all_urls>`.
 
 ### Decisions (continues 1-8)
 
@@ -660,22 +672,21 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
     John.** Microsoft itself routes attendees to a web page for these. Whether the client
     should ever open them is unconfirmed. Firing a scheme on a page Microsoft treats as web
     risks a client that lands on nothing. Revisit only on a real report.
-11. **Emitted form is v2 (host-preserving); native-path handling is OPEN for the Plan.**
-    The content script emits `msteams://<host>/<path>`: A10 requires the clicked host in the
-    emitted URL and Requirement 11 drops `fqdn`, so pure host-less v1 (`msteams:/<path>`) is
-    not an option -- it carries no cloud for the fallback to preserve. What the Plan settles is
-    the NATIVE path to `teams-for-linux`. The client's own matching (research): its v2 regex
-    accepts the three commercial+consumer hosts `teams.microsoft.com`, `teams.live.com`,
-    `teams.cloud.microsoft` and rejects gov/DoD; its host-less v1 form loads the path against
-    the client's single `config.url` (default `teams.cloud.microsoft`), which DROPS the
-    original cloud. So a global v1 translation would REGRESS a `teams.live.com` consumer link
-    (and any host != `config.url`) even though the client would have accepted its v2 form. The
-    Plan therefore handles the native path per-host: forward v2 for the three hosts the client
-    matches, and for gov/DoD either leave it to the user's `teams-for-linux` config (Decision 9)
-    or translate to v1 knowing the client routes it via `config.url`. State what a gov user with
-    a correctly-configured client gets, and whether Decision 4 (forward unchanged) survives. The
-    web-app fallback uses the preserved host regardless, and any option keeps the passcode and
-    cloud handling in the Security notes below.
+11. **Emitted form is v2 (host-preserving); native path forwards it UNCHANGED. Decided.**
+    The content script emits `msteams://<host>/<path>` (A10 requires the clicked host; host-less
+    v1 carries no cloud for the fallback). On the native path the handler forwards it to
+    `teams-for-linux` UNCHANGED for every host -- Decision 4 survives and the handler stays
+    host-blind (consistent with A11: host validation is fallback-only). Consequences from the
+    research: `teams-for-linux` v2.20.0's v2 regex accepts `teams.microsoft.com`,
+    `teams.live.com`, `teams.cloud.microsoft` (correct cloud opens) and REJECTS gov/DoD/cn, so a
+    gov/DoD/cn user on the client's default config gets a LOUD no-op (nothing opens) and must
+    point `teams-for-linux` at their cloud in its own config (Decision 9, A9) -- required
+    regardless of what we emit. We deliberately do NOT translate to host-less v1: v1 loads every
+    link against the client's single `config.url`, silently opening a consumer or gov meeting in
+    the WRONG (commercial) cloud, and a silent wrong-cloud join is worse than a loud no-op;
+    translating would also put host logic on the native path, contradicting A11 and ending
+    Decision 4. The web-app fallback preserves the host regardless. (Resolved 2026-09-07 from the
+    earlier per-host/translation framing.)
 12. **21Vianet host, best-effort. Recommended: include in the host set, flag unverified, no
     acceptance criterion. Open for John.** Cost: one more host pattern in the manifest and
     handler, and one more possible "open msteams?" prompt. Risk: none new, since the script
@@ -698,13 +709,16 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 - **More one-time prompts.** The browser's "always allow" is keyed per origin. A user who
   meets links on several clouds sees the prompt once per host they hit, up to the size of the
   host set. Same behaviour as today, larger bound. Not ours to suppress.
-- **Marker collision with arbitrary short ids.** Design 1's loop guard stands down when the
-  URL contains the bare `omarchyWebapp` token (bare because Microsoft encodes `=1` to `%3D1`
-  in the launcher `url=`). A `/meet/` id is arbitrary (Requirement 7), so a bare substring
-  match could false-stand-down on a meeting whose id or passcode contained that literal token.
-  The marker check must be scoped to match the marker only as its own query parameter
-  (`omarchyWebapp` as a `?`/`&`-delimited key, and its `%3D1`-encoded form inside the launcher
-  `url=`), never as a substring of the path, id, or passcode. A15 adds a collision case.
+- **Marker recognition vs arbitrary short ids.** Design 1's loop guard stands down when it sees
+  the `omarchyWebapp` marker. A `/meet/` id or passcode is arbitrary (Requirement 7), so a bare
+  substring match could false-stand-down on a meeting whose id contained that literal token.
+  WHAT the check must do: recognise `omarchyWebapp` as a query KEY in whatever layer it sits --
+  the page query, the decoded `url=` value, or the fragment query -- after decoding that layer.
+  (Inside an encoded `url=` the delimiters are `%3F`/`%26`, so a raw key-match and a bare
+  `omarchyWebapp%3D1` substring both fail; decode first.) It must not match the token as a
+  substring of a path, id, or passcode. Tie-break if the layering is ever ambiguous: a false
+  stand-down (a real meeting not opening) is preferred over a false fire, since the false fire
+  is the Phase 0 loop bug and the collision is a synthetic id. A15 adds a collision case.
 - **The `p=` passcode in the URL.** `p=` is the hashed meeting passcode Microsoft puts in the
   shareable link. Anyone holding the link already holds it, and it already travels through the
   browser's history and the launcher URL. Carrying it into `msteams:` and the fallback URL
@@ -731,6 +745,7 @@ The old non-goal line "Personal-account `teams.live.com/meet/<id>` links" is rem
 | spec addition | codex-review (Sol, gpt-5.6-sol) | 1 | 4 (0 P1, 4 P2) | 4; A12 /v2/ negative narrowed to fragments with no meeting (matches A8); Decision 11 now per-host (global v1 would regress teams.live.com consumer + non-config.url clouds -- tfl v2 accepts commercial+consumer, rejects gov/DoD); A15 adds a gov/DoD launcher case asserting host preservation; Req11 settled the kept-set contract {p,context}, HOW open |
 | spec addition | codex-review (Sol) | 2 | 4 (0 P1, 3 P2, 1 P3) | 4; marker check must scope to the marker query param (a /meet/ id/passcode containing "omarchyWebapp" must still fire) + collision test; Req11 -> ALLOW-LIST (resolves grok-blacklist vs codex-exact-set: allow-list required for an exact testable contract) + unknown-key test; exclusion tests must embed a valid meeting in url= (bare /convene/ proves nothing); Problem: only gov/DoD newly non-injecting (teams.live.com already injects) |
 | spec addition | codex-review (Sol) | 3 (cap) | 4 (0 P1, 4 P2) | 4; Req2 "no config" scoped to commercial/consumer (gov/DoD need client config, A9/Dec9); A11 + Security host-rejection is FALLBACK-ONLY (native forwards every msteams unchanged, Dec4, or regresses Req5); A14 throttle identity is cloud-aware ({microsoft.com,cloud.microsoft} one class, live/gov/dod/cn distinct -- same id on distinct clouds both fire); Decision 12 gives .cn the same best-effort native routing as gov/DoD. Cap reached |
+| spec addition | claude-review (fable-5, single) | 1 | 11 (3 major, 8 nit) | 11; MAJOR: Req7 classic shape loosened to settled breadth (Req7 as written regressed CHANNEL meetings @thread.tacv2/@thread.skype with msgid != 0 -- verified live); launcher type-gate DROPPED (redundant + fragile: a type-less launcher URL would silently break joins; url= is a source only on the /dl/launcher/ page, which is what excludes /convene/); Decision 11 RESOLVED to forward-v2-unchanged (Dec4 survives, handler host-blind; gov/DoD get a loud no-op, better than v1's silent wrong-cloud join). Nits: reverted A14 to the settled host-independent throttle (codex's cloud-aware key guards a synthetic collision -- grok/Sol vs fable, adjudicated to simple); marker WHAT-framing + tie-break; Req11 content-script-scoped (handler adds no 2nd allow-list); 21Vianet as "Requirement 8 set per Decision 12"; /v2 research-deviation noted; stale Req5 edit item removed. TO-DO: verify a live channel-meeting link shape in implementation |
 
 
 ## Plan
