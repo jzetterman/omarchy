@@ -341,8 +341,8 @@ path. Otherwise the handler opens a web-app window on the `https://` meeting URL
 # omarchy:summary=Open Teams meetings from browser protocol links
 # omarchy:args=[url]
 url="$1"; path=""
-# Host alternation is unquoted in =~ so the | branches stay regex. Patterns live
-# in variables so a # in the short-shape class cannot start a comment.
+# The pattern variable is unquoted on the right of =~ so its | branches stay regex.
+# Patterns live in variables so a # in the short-shape class cannot start a comment.
 hosts='teams\.microsoft\.com|teams\.cloud\.microsoft|teams\.live\.com|gov\.teams\.microsoft\.us|dod\.teams\.microsoft\.us|teams\.microsoftonline\.cn'
 hosted_classic="^msteams:/*($hosts)/l/meetup-join/(19(:|%3[aA])[^[:space:]]+)$"
 hosted_short="^msteams:/*($hosts)/meet/([^/?#[:space:]]+)(\?[^#[:space:]]*)?(#[^[:space:]]*)?(/[^[:space:]]*)?$"
@@ -1430,6 +1430,8 @@ added to `chromium-teams-join-test.sh`, not here.
 | Phase 4 plan | codex-review (Sol) | 3 (cap) | 1 (0 P1, 1 P2) | 1; round-2's regex was too tight: `[^/#space]*` truncated a passcode at `/` (p=a/b) and no suffix allowed a #fragment (fragment tests would fall home, violating A9/A11). Rewrote the handler as two branches (classic keeps its tail; short = `meet/(id)(\?[^#space]*)?(#[^space]*)?(/[^space]*)?` -> path=id+query+frag, drop /extra). Verified in bash: p=a/b kept, #/join kept, /meet/123/extra?p= -> meet/123 (matches content script). Added slash-in-passcode test. Cap reached |
 | Phase 4 plan | claude-review (fable-5, single) | 1 | 5 (1 major, 4 nit) | 5; MAJOR: the firefox version-bump check NO-OPS on this branch (extension not on origin/quattro -> new-extension early exit), so a forgotten 0.2 bump would ship green and Zen would keep the old 3-host 0.1 XPI. Added an explicit .version=="0.2" assertion to the chromium manifest test + corrected 3 false claims. Nits: order-of-work uses bash not ./ (files are 644); /v2 slash-less pathname guard; hosts-Node rationale; Step 0 channel-meeting fallback fixture. fable independently RAN 23 content-regex inputs + the 4 handler branches + the marker helper in the Node sandbox -- all sound; every Req 7-12 + A9-A15 has a code change and a test. Plan gate COMPLETE |
 | Phase 4 diff (3ecf4209) | grok-review | 1 | 0 | Clean, no findings (sandbox enforced, repo integrity verified). Ran both suites + node/bash edge probes: real launcher fixture drops anon keeps p=; channel @thread.tacv2/@thread.skype fire; negatives (/l/message, /convene/?url=, /v2/ no-meeting, /l/<type>/) don't; look-alikes/port/userinfo go home; p= not in stamp/latch; marker as query key; tests would catch a wrong impl (digits-only, /0-required, type gate, drop-list, hardcoded host, substring marker, hash-everywhere) |
+| Phase 4 diff (3ecf4209) | codex-review (Sol, gpt-5.6-sol) | 1 | 0 | Clean, no findings (repo integrity verified). Conforms to Req 7-12, A9-A15, Decisions 9-12; ran the content-script + firefox tests and bash handler probes |
+| Phase 4 diff (3ecf4209) | claude-review (fable-5, single) | 1 | 4 nit (0 major) | ship. fable ran 44 content-script + 19 handler inputs + security/marker/conformance probes -- all sound. Fixed nit 3 (handler comment said "host alternation unquoted" -> "pattern variable unquoted"). Non-actionable: (1) legacy /_#/ page shell no longer fires -- conformant per plan (hash only on /v2/); (2) .version==0.2 literal is a post-MERGE cleanup once the firefox check enforces; (4) empty-query ?& inherited from the classic path, harmless. DIFF GATE COMPLETE |
 
 ## Phase 0 results
 
