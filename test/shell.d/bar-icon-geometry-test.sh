@@ -16,6 +16,8 @@ trap 'rm -rf "$test_tmp"' EXIT
 
 ln -s "$ROOT/shell/Ui" "$test_tmp/Ui"
 ln -s "$ROOT/shell/Commons" "$test_tmp/Commons"
+ln -s "$ROOT/shell/plugins/panels/dropbox/DropboxIcon.qml" "$test_tmp/DropboxIcon.qml"
+ln -s "$ROOT/shell/plugins/panels/tailscale/TailscaleIcon.qml" "$test_tmp/TailscaleIcon.qml"
 
 cat >"$test_tmp/shell.qml" <<'QML'
 import QtQuick
@@ -25,10 +27,28 @@ import qs.Ui
 
 ShellRoot {
   id: root
+  property real customWidth: 15
+  property bool completed: false
+  property bool testsStarted: false
+  property int customRenderType: -1
+  readonly property bool imageReady: customImage.componentPaintedWidth > 0 && croppedImage.componentPaintedWidth > 0
+  readonly property string imageSource: "data:image/svg+xml;base64," + Qt.btoa('<svg xmlns="http://www.w3.org/2000/svg" width="15" height="9"><rect width="15" height="9" fill="white"/></svg>'.split("").map(function(c) { return c.charCodeAt(0) }))
 
   function fail(message) {
     console.log("RESULT fail " + message)
     Qt.quit()
+  }
+
+  function checkPaintedBounds(icon, name) {
+    if (Math.abs(icon.opticalCenterErrorX) > 0.05 || Math.abs(icon.opticalCenterErrorY) > 0.05) {
+      fail(name + " painted bounds are off center: " + icon.opticalCenterErrorX + ", " + icon.opticalCenterErrorY)
+      return false
+    }
+    if (Math.abs(Math.max(icon.glyphPaintedWidth, icon.glyphPaintedHeight) - Style.bar.iconSize) > 0.05) {
+      fail(name + " painted size is " + icon.glyphPaintedWidth + " × " + icon.glyphPaintedHeight)
+      return false
+    }
+    return true
   }
 
   function checkIcon(icon, name) {
@@ -40,68 +60,144 @@ ShellRoot {
       fail(name + " optical canvas is " + icon.opticalSize)
       return false
     }
-    // The open-panel underline centers on the slot, so the glyph must too.
-    if (Math.abs(icon.opticalCenterErrorX) > 0.05) {
-      fail(name + " painted bounds are off the slot's center by " + icon.opticalCenterErrorX)
-      return false
-    }
     if (icon.glyphFontSize !== Style.bar.iconFont) {
       fail(name + " font size is " + icon.glyphFontSize)
+      return false
+    }
+    return checkPaintedBounds(icon, name)
+  }
+
+  function checkGeometry() {
+    if (!checkIcon(bluetooth, "bluetooth")) return false
+    if (!checkIcon(network, "network")) return false
+    if (!checkIcon(audio, "audio")) return false
+    if (!checkIcon(monitor, "monitor")) return false
+    if (!checkIcon(power, "power")) return false
+    if (!checkIcon(elsewhen, "elsewhen")) return false
+    if (!checkIcon(menu, "menu")) return false
+    var sourceRatio = sourceMetrics.tightBoundingRect.width / sourceMetrics.tightBoundingRect.height
+    if (Math.abs(bluetooth.glyphPaintedWidth / bluetooth.glyphPaintedHeight - sourceRatio) > 0.01) {
+      fail("the glyph's aspect ratio changes")
+      return false
+    }
+    if (!checkPaintedBounds(smallFont, "small source font")) return false
+    if (!checkPaintedBounds(largeFont, "large source font")) return false
+    if (!checkPaintedBounds(customSize, "15px size override")) return false
+    if (!checkPaintedBounds(smallCanvas, "small source canvas")) return false
+    if (!legacyIcon.iconLabel
+        || Math.abs(Math.max(legacyIcon.iconPaintedWidth, legacyIcon.iconPaintedHeight) - Style.bar.iconSize) > 0.05
+        || Math.abs(legacyIcon.iconCenterErrorX) > 0.05 || Math.abs(legacyIcon.iconCenterErrorY) > 0.05) {
+      fail("a custom WidgetButton does not fit: " + legacyIcon.iconLabel + " "
+        + legacyIcon.iconPaintedWidth + " × " + legacyIcon.iconPaintedHeight + " "
+        + legacyIcon.iconCenterErrorX + ", " + legacyIcon.iconCenterErrorY)
+      return false
+    }
+    if (textLabel.iconLabel || textLabel.fontSize !== 15) {
+      fail("icon normalization changes an ordinary text label")
+      return false
+    }
+    if (customRenderType !== Text.CurveRendering) {
+      fail("custom glyphs do not use the scalable renderer")
+      return false
+    }
+    var customIcons = [customBox, nestedBox, customGlyph, rotatedBox, customImage, croppedImage]
+    for (var i = 0; i < customIcons.length; i++) {
+      var custom = customIcons[i]
+      if (Math.abs(Math.max(custom.componentPaintedWidth, custom.componentPaintedHeight) - Style.bar.iconSize) > 0.05
+          || Math.abs(custom.opticalCenterErrorX) > 0.05 || Math.abs(custom.opticalCenterErrorY) > 0.05) {
+        fail("custom component " + i + " does not fit: " + custom.componentPaintedWidth + " × "
+          + custom.componentPaintedHeight + " " + custom.opticalCenterErrorX + ", " + custom.opticalCenterErrorY)
+        return false
+      }
+    }
+    if (Math.abs(customBox.componentPaintedWidth / customBox.componentPaintedHeight - root.customWidth / 9) > 0.01
+        || Math.abs(rotatedBox.componentPaintedWidth / rotatedBox.componentPaintedHeight - 9 / 15) > 0.01
+        || Math.abs(customImage.componentPaintedWidth / customImage.componentPaintedHeight - 15 / 9) > 0.01
+        || Math.abs(croppedImage.componentPaintedWidth / croppedImage.componentPaintedHeight - 1) > 0.01) {
+      fail("a custom component's aspect ratio changes")
+      return false
+    }
+    if (!checkPaintedBounds(labelledPower, "battery percentage")) return false
+    if (Math.abs(labelledPower.glyphPaintedWidth - power.glyphPaintedWidth) > 0.05
+        || Math.abs(labelledPower.glyphPaintedHeight - power.glyphPaintedHeight) > 0.05) {
+      fail("the battery percentage changes the icon's size")
+      return false
+    }
+    if (vector.implicitWidth !== Style.bar.iconSlot || vector.opticalSize !== Style.bar.iconCanvas) {
+      fail("vector icon does not share glyph geometry")
+      return false
+    }
+    if (verticalIcon.implicitWidth !== Style.bar.sizeVertical || verticalIcon.implicitHeight !== Style.bar.iconSlot) {
+      fail("vertical icon does not use the shared slot")
+      return false
+    }
+    if (!checkPaintedBounds(verticalIcon, "vertical icon")) return false
+    if (!checkPaintedBounds(horizontalIndicator, "horizontal indicator")) return false
+    if (!checkPaintedBounds(verticalIndicator, "vertical indicator")) return false
+    if (verticalIndicator.implicitWidth !== Style.bar.sizeVertical || verticalIndicator.implicitHeight >= Style.bar.iconSlot) {
+      fail("vertical indicator does not retain compact spacing")
+      return false
+    }
+    if (horizontalIndicator.implicitWidth >= Style.bar.iconSlot) {
+      fail("horizontal indicator does not retain compact spacing")
+      return false
+    }
+    if (horizontalIndicatorPair.implicitWidth >= Style.bar.iconSlot * 2
+        || verticalIndicatorPair.implicitHeight >= Style.bar.iconSlot * 2) {
+      fail("indicator groups do not retain compact internal spacing")
+      return false
+    }
+    if (compactStatusIcon.implicitWidth !== Style.bar.statusSlot
+        || compactVerticalStatusIcon.implicitHeight !== Style.bar.statusSlot) {
+      fail("compact status icons do not use the shared status slot")
+      return false
+    }
+    if (!checkPaintedBounds(compactStatusIcon, "compact status icon")) return false
+    if (!checkPaintedBounds(compactVerticalStatusIcon, "compact vertical status icon")) return false
+    if (!checkPaintedBounds(rotatedIcon, "rotated icon")) return false
+    if (Math.abs(Math.max(dropbox.width, dropbox.height) - Style.bar.iconSize) > 0.05
+        || Math.abs(Math.max(tailscale.width, tailscale.height) - Style.bar.iconSize) > 0.05) {
+      fail("vector icons do not use the shared visual size")
       return false
     }
     return true
   }
 
-  Component.onCompleted: Qt.callLater(function() {
-    if (!checkIcon(bluetooth, "bluetooth")) return
-    if (!checkIcon(network, "network")) return
-    if (!checkIcon(audio, "audio")) return
-    if (!checkIcon(monitor, "monitor")) return
-    if (!checkIcon(power, "power")) return
-    if (!checkIcon(elsewhen, "elsewhen")) return
-    var baseline = bluetooth.glyphBaselineY
-    if (network.glyphBaselineY !== baseline || audio.glyphBaselineY !== baseline
-        || monitor.glyphBaselineY !== baseline || power.glyphBaselineY !== baseline) {
-      fail("glyph baselines do not match")
-      return
-    }
-    if (vector.implicitWidth !== Style.bar.iconSlot || vector.opticalSize !== Style.bar.iconCanvas) {
-      fail("vector icon does not share glyph geometry")
-      return
-    }
-    if (verticalIcon.implicitWidth !== Style.bar.sizeVertical || verticalIcon.implicitHeight !== Style.bar.iconSlot) {
-      fail("vertical icon does not use the shared slot")
-      return
-    }
-    if (verticalIndicator.implicitWidth !== Style.bar.sizeVertical || verticalIndicator.implicitHeight >= Style.bar.iconSlot) {
-      fail("vertical indicator does not retain compact spacing")
-      return
-    }
-    if (verticalIndicator.glyphFontSize !== Style.font.caption) {
-      fail("indicator does not use the secondary icon scale")
-      return
-    }
-    if (Math.abs(verticalIndicator.opticalCenterErrorX) > 0.05) {
-      fail("vertical indicator is not optically centered")
-      return
-    }
-    if (horizontalIndicator.implicitWidth >= Style.bar.iconSlot) {
-      fail("horizontal indicator does not retain compact spacing")
-      return
-    }
-    if (horizontalIndicatorPair.implicitWidth >= Style.bar.iconSlot * 2
-        || verticalIndicatorPair.implicitHeight >= Style.bar.iconSlot * 2) {
-      fail("indicator groups do not retain compact internal spacing")
-      return
-    }
-    if (compactStatusIcon.implicitWidth !== Style.bar.statusSlot
-        || compactVerticalStatusIcon.implicitHeight !== Style.bar.statusSlot) {
-      fail("compact status icons do not use the shared status slot")
-      return
-    }
-    console.log("RESULT pass")
-    Qt.quit()
-  })
+  function runGeometryTests() {
+    if (testsStarted) return
+    testsStarted = true
+    if (!checkGeometry()) return
+    var labelBaseline = plainLabel.baselineY
+    root.customWidth = 23
+    Style.applyShellValues({ "font.base-size": "18", "bar.icon-size": "14", "bar.icon-canvas": "19" })
+    Qt.callLater(function() {
+      if (!checkGeometry()) return
+      if (Style.bar.iconSize !== 21 || Style.bar.iconCanvas !== 29) {
+        fail("theme icon dimensions do not follow the font scale")
+        return
+      }
+      if (plainLabel.baselineY !== labelBaseline) {
+        fail("bar icon settings change a text label's baseline")
+        return
+      }
+      Style.applyShellValues({ "font.base-size": "18", "bar.scale-with-font": "false", "bar.icon-size": "20" })
+      Qt.callLater(function() {
+        if (!checkGeometry()) return
+        if (Style.bar.iconSize !== Style.bar.iconCanvas) {
+          fail("oversized icons do not fit their canvas")
+          return
+        }
+        console.log("RESULT pass")
+        Qt.quit()
+      })
+    })
+  }
+
+  onImageReadyChanged: if (imageReady && completed) Qt.callLater(runGeometryTests)
+  Component.onCompleted: {
+    completed = true
+    if (imageReady) Qt.callLater(runGeometryTests)
+  }
 
   QtObject {
     id: testBar
@@ -137,6 +233,79 @@ ShellRoot {
   BarIconButton { id: monitor; bar: testBar; text: "󰍹" }
   BarIconButton { id: power; bar: testBar; text: "󰁹" }
   BarIconButton { id: elsewhen; bar: testBar; text: "󰇧" }
+  TextMetrics {
+    id: sourceMetrics
+    font.family: testBar.fontFamily
+    font.pixelSize: Style.bar.iconFont
+    text: bluetooth.text
+  }
+  BarIconButton { id: menu; bar: testBar; text: "\ue900"; fontFamily: "omarchy" }
+  BarIconButton { id: smallFont; bar: testBar; text: "\uf053"; fontSize: 8 }
+  BarIconButton { id: largeFont; bar: testBar; text: "󰍹"; fontSize: 24 }
+  BarIconButton { id: customSize; bar: testBar; text: "󰍹"; iconSize: 15 }
+  BarIconButton { id: smallCanvas; bar: testBar; text: "󰍹"; opticalSize: 8 }
+  WidgetButton { id: legacyIcon; bar: testBar; text: "󰍹"; fontSize: 15 }
+  WidgetButton { id: textLabel; bar: testBar; text: "GPU"; fontSize: 15 }
+  BarIconButton {
+    id: customBox
+    bar: testBar
+    iconSize: 15
+    iconComponent: Component { Rectangle { width: root.customWidth; height: 9; color: "white" } }
+  }
+  BarIconButton {
+    id: nestedBox
+    bar: testBar
+    iconComponent: Component {
+      Item {
+        Rectangle { x: 1; y: 5; width: 15; height: 9; color: "white" }
+      }
+    }
+  }
+  BarIconButton {
+    id: customGlyph
+    bar: testBar
+    iconComponent: Component {
+      Text {
+        textFormat: Text.PlainText
+        text: "\ue900"
+        font.family: "omarchy"
+        font.pixelSize: 15
+        onRenderTypeChanged: root.customRenderType = renderType
+      }
+    }
+  }
+  BarIconButton {
+    id: rotatedBox
+    bar: testBar
+    iconComponent: Component { Rectangle { width: 15; height: 9; rotation: 90; color: "white" } }
+  }
+  BarIconButton {
+    id: customImage
+    bar: testBar
+    iconComponent: Component {
+      Image {
+        fillMode: Image.PreserveAspectFit
+        source: root.imageSource
+      }
+    }
+  }
+  BarIconButton {
+    id: croppedImage
+    bar: testBar
+    iconComponent: Component {
+      Image {
+        width: 15
+        height: 15
+        fillMode: Image.PreserveAspectCrop
+        source: root.imageSource
+      }
+    }
+  }
+  BarIconButton { id: labelledPower; bar: testBar; text: "󰁹"; labelText: "100%"; slotSize: Style.bar.iconSlot * 2 }
+  BarIconButton { id: rotatedIcon; bar: verticalBar; text: "\uf053"; textRotation: 90 }
+  OpticalGlyph { id: plainLabel; width: 30; height: 20; text: "12"; fontSize: 12 }
+  DropboxIcon { id: dropbox; iconSize: Style.bar.iconSize / aspectRatio; artworkScale: 1 }
+  TailscaleIcon { id: tailscale; iconSize: Style.bar.iconSize }
   BarIconButton {
     id: vector
     bar: testBar
@@ -168,7 +337,7 @@ output=$(timeout 15 env \
 
 if ! grep -q 'RESULT pass' <<<"$output"; then
   printf '%s\n' "$output" >&2
-  fail "bar icons share slot and baseline geometry"
+  fail "bar icons share visual size and center geometry"
 fi
 
-pass "bar icons share slot and baseline geometry"
+pass "bar icons share visual size and center geometry"
