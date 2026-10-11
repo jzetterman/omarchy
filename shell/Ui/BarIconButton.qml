@@ -25,6 +25,7 @@ WidgetButton {
   readonly property int glyphFontSize: glyph.visible ? glyph.renderedFontSize : 0
   readonly property real componentPaintedWidth: customIcon.visible ? customIcon.paintedWidth : 0
   readonly property real componentPaintedHeight: customIcon.visible ? customIcon.paintedHeight : 0
+  readonly property rect componentSourceBounds: customIcon.sourceBounds
 
   labelVisible: false
   hasVisualContent: text !== "" || iconComponent !== null || labelText !== ""

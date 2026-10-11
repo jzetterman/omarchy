@@ -21,6 +21,7 @@ ln -s "$ROOT/shell/plugins/panels/tailscale/TailscaleIcon.qml" "$test_tmp/Tailsc
 
 cat >"$test_tmp/shell.qml" <<'QML'
 import QtQuick
+import QtQuick.Shapes
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -31,6 +32,10 @@ ShellRoot {
   property bool completed: false
   property bool testsStarted: false
   property int customRenderType: -1
+  property real textBoxWidth: 32
+  property real alignedTextContentWidth: 0
+  property real pathX: 6
+  property real pathY: 8
   readonly property bool imageReady: customImage.componentPaintedWidth > 0 && croppedImage.componentPaintedWidth > 0
   readonly property string imageSource: "data:image/svg+xml;base64," + Qt.btoa('<svg xmlns="http://www.w3.org/2000/svg" width="15" height="9"><rect width="15" height="9" fill="white"/></svg>'.split("").map(function(c) { return c.charCodeAt(0) }))
 
@@ -100,7 +105,34 @@ ShellRoot {
       fail("custom glyphs do not use the scalable renderer")
       return false
     }
-    var customIcons = [customBox, nestedBox, customGlyph, rotatedBox, customImage, croppedImage]
+    var alignedBounds = centeredGlyph.componentSourceBounds
+    var textSpare = root.textBoxWidth - 3 - 5 - root.alignedTextContentWidth
+    var expectedTextX = 3 + textSpare / 2 + customTextMetrics.tightBoundingRect.x
+    var pathBounds = paddedShape.componentSourceBounds
+    if (Math.abs(alignedBounds.x - expectedTextX) > 0.05
+        || Math.abs(pathBounds.x - root.pathX) > 0.05 || Math.abs(pathBounds.y - root.pathY) > 0.05
+        || Math.abs(pathBounds.width - 12) > 0.05 || Math.abs(pathBounds.height - 10) > 0.05) {
+      fail("custom source bounds are incorrect. Text origin: " + alignedBounds.x + " instead of " + expectedTextX
+        + ". Shape bounds: " + [pathBounds.x, pathBounds.y, pathBounds.width, pathBounds.height].join(", "))
+      return false
+    }
+    var expectedRightX = 3 + textSpare + customTextMetrics.tightBoundingRect.x
+    if (Math.abs(rightGlyph.componentSourceBounds.x - expectedRightX) > 0.05
+        || Math.abs(mirroredGlyph.componentSourceBounds.x - expectedRightX) > 0.05) {
+      fail("right-aligned or mirrored custom text has an incorrect origin")
+      return false
+    }
+    var shapeScale = Math.min(24 / (root.pathX + 12), 36 / (root.pathY + 10))
+    var fittedBounds = fittedShape.componentSourceBounds
+    if (Math.abs(fittedBounds.x - root.pathX * shapeScale) > 0.05
+        || Math.abs(fittedBounds.y - (36 - 10 * shapeScale)) > 0.05
+        || Math.abs(fittedBounds.width - 12 * shapeScale) > 0.05
+        || Math.abs(fittedBounds.height - 10 * shapeScale) > 0.05) {
+      fail("a resized shape's path bounds ignore its fill mode or alignment")
+      return false
+    }
+    var customIcons = [customBox, nestedBox, customGlyph, rotatedBox, customImage, croppedImage,
+      centeredGlyph, rightGlyph, mirroredGlyph, paddedShape, fittedShape]
     for (var i = 0; i < customIcons.length; i++) {
       var custom = customIcons[i]
       if (Math.abs(Math.max(custom.componentPaintedWidth, custom.componentPaintedHeight) - Style.bar.iconSize) > 0.05
@@ -169,6 +201,9 @@ ShellRoot {
     if (!checkGeometry()) return
     var labelBaseline = plainLabel.baselineY
     root.customWidth = 23
+    root.textBoxWidth = 48
+    root.pathX = 2
+    root.pathY = 3
     Style.applyShellValues({ "font.base-size": "18", "bar.icon-size": "14", "bar.icon-canvas": "19" })
     Qt.callLater(function() {
       if (!checkGeometry()) return
@@ -271,6 +306,81 @@ ShellRoot {
         font.family: "omarchy"
         font.pixelSize: 15
         onRenderTypeChanged: root.customRenderType = renderType
+      }
+    }
+  }
+  TextMetrics {
+    id: customTextMetrics
+    font.family: "omarchy"
+    font.pixelSize: 15
+    text: "\ue900"
+  }
+  component AlignedTextIcon: Text {
+    width: root.textBoxWidth
+    height: 28
+    leftPadding: 3
+    rightPadding: 5
+    horizontalAlignment: Text.AlignHCenter
+    verticalAlignment: Text.AlignVCenter
+    textFormat: Text.PlainText
+    text: "\ue900"
+    font.family: "omarchy"
+    font.pixelSize: 15
+  }
+  BarIconButton {
+    id: centeredGlyph
+    bar: testBar
+    iconComponent: Component {
+      AlignedTextIcon {
+        id: alignedText
+        onContentWidthChanged: root.alignedTextContentWidth = alignedText.contentWidth
+        Component.onCompleted: root.alignedTextContentWidth = alignedText.contentWidth
+      }
+    }
+  }
+  BarIconButton {
+    id: rightGlyph
+    bar: testBar
+    iconComponent: Component { AlignedTextIcon { horizontalAlignment: Text.AlignRight } }
+  }
+  BarIconButton {
+    id: mirroredGlyph
+    bar: testBar
+    iconComponent: Component {
+      AlignedTextIcon {
+        horizontalAlignment: Text.AlignLeft
+        LayoutMirroring.enabled: true
+      }
+    }
+  }
+  component PaddedShapeIcon: Shape {
+    width: 24
+    height: 24
+    ShapePath {
+      strokeWidth: 0
+      fillColor: "white"
+      startX: root.pathX
+      startY: root.pathY
+      PathLine { x: root.pathX + 12; y: root.pathY }
+      PathLine { x: root.pathX + 12; y: root.pathY + 10 }
+      PathLine { x: root.pathX; y: root.pathY + 10 }
+      PathLine { x: root.pathX; y: root.pathY }
+    }
+  }
+  BarIconButton {
+    id: paddedShape
+    bar: testBar
+    iconComponent: Component { PaddedShapeIcon {} }
+  }
+  BarIconButton {
+    id: fittedShape
+    bar: testBar
+    iconComponent: Component {
+      PaddedShapeIcon {
+        height: 36
+        fillMode: Shape.PreserveAspectFit
+        horizontalAlignment: Shape.AlignHCenter
+        verticalAlignment: Shape.AlignBottom
       }
     }
   }
