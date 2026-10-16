@@ -49,6 +49,11 @@ SH
     ln -s stub "$SANDBOX/bin/$name"
   done
 
+  # Report every command as absent, so a Kitty installed on the host cannot
+  # stand in for the terminal configs a case removes.
+  printf '#!/bin/bash\nexit 1\n' >"$SANDBOX/bin/omarchy-cmd-present"
+  chmod +x "$SANDBOX/bin/omarchy-cmd-present"
+
   printf '%s\n' "[font]" "size = 9" 'normal = { family = "Seed Alacritty" }' \
     >"$SANDBOX/home/.config/alacritty/alacritty.toml"
   printf '%s\n' "font_family Seed Kitty" "font_size 9.0" >"$SANDBOX/home/.config/kitty/kitty.conf"
@@ -72,6 +77,7 @@ run_cli() {
   STATUS=0
   HOME="$SANDBOX/home" \
   XDG_RUNTIME_DIR="$SANDBOX/runtime" \
+  OMARCHY_PATH="$ROOT" \
   PATH="$SANDBOX/bin:$ROOT/bin:$PATH" \
     "$ROOT/bin/omarchy-display-text-size" "$@" \
     >"$SANDBOX/stdout" 2>"$SANDBOX/stderr" || STATUS=$?
