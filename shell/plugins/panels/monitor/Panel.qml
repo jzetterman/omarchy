@@ -391,12 +391,17 @@ Panel {
   // scope wins; flushed in order from textScaleProc.onRunningChanged.
   property var pendingTextWrites: ({})
 
+  // Drop a status read if a text-size write overlaps it.
+  property bool textReadStale: false
+
   // scope "" writes every surface at once (the unified slider); otherwise it is
   // a textScopeSpecs key and becomes the matching CLI flag. px is always the
   // CLI's unit; the terminal row's optimistic pt mirrors the CLI's own px→pt
   // conversion. The row is updated from what we asked for rather than read
-  // back — if the write fails, the next status read corrects it.
+  // back — a status read that overlaps a write is dropped, and the next poll
+  // corrects a failed write.
   function writeTextSize(scope, px) {
+    root.textReadStale = true
     if (textScaleProc.running) {
       // A unified write supersedes any per-scope writes queued before it.
       if (scope === "") root.pendingTextWrites = ({})
@@ -456,10 +461,14 @@ Panel {
   }
 
   function readTextScopes() {
-    if (!textStatusProc.running) textStatusProc.running = true
+    if (!textStatusProc.running) {
+      root.textReadStale = textScaleProc.running
+      textStatusProc.running = true
+    }
   }
 
   function updateTextScopes(raw) {
+    if (root.textReadStale) return
     var parsed = Model.parseTextSizeStatus(raw)
     root.gtkPx = parsed.gtkPx
     root.termPt = parsed.termPt
@@ -594,7 +603,7 @@ Panel {
 
   // Reads the GTK factor and terminal point size for the scope rows. Wrapped in
   // timeout so a wedged gsettings can't leave this process running and block
-  // every later read through the guard in readTextScopes().
+  // later reads behind the one-read-at-a-time check in readTextScopes().
   Process {
     id: textStatusProc
     command: ["timeout", "-k", "1", "3", "omarchy-display-text-size"]
@@ -1138,7 +1147,8 @@ Panel {
         integer: true
         tickCount: scopeRow.spec.stops.length
         // Unread rows park on the row's default notch (12px / 9pt) as a
-        // placeholder; the label says "—".
+        // placeholder; the label says "—". Wheel input stays off until read.
+        wheelEnabled: scopeRow.value > 0
         value: root.nearestStop(scopeRow.spec.stops, scopeRow.value || scopeRow.spec.placeholder)
         onReleased: function(v) {
           root.writeTextScope(scopeRow.rowIndex, scopeRow.spec.stops[Math.round(v)])
